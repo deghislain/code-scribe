@@ -1,0 +1,47 @@
+[project]
+name = "code-scribe"
+version = "0.1.0"
+description = "AI agent that analyzes GitHub repositories and generates PDF documentation"
+requires-python = "3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "groq",
+    "weasyprint",
+    "gitpython",
+    "apscheduler",
+    "aiofiles",
+    "python-dotenv",
+    "jinja2",
+    "httpx",
+    "pydantic-settings",
+]
+
+[project.scripts]
+code-scribe = "backend.main:start"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["backend"]
+omit = [
+    "backend/agent/llm_smoke_test.py",
+    "backend/agent/pdf_renderer.py",
+    "backend/memory/test_store.py",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

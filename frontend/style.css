@@ -1,0 +1,218 @@
+/* Code-Scribe — frontend styles */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #1f2328;
+  background: #f7f8fa;
+}
+
+/* ----- Layout ----- */
+#app {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 1rem 4rem;
+}
+
+header {
+  padding: 2rem 0 1rem;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 1.5rem;
+}
+
+header h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.tagline {
+  margin: 0;
+  color: #57606a;
+  font-size: 0.9rem;
+}
+
+main > section {
+  margin-bottom: 1.75rem;
+}
+
+h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #57606a;
+  margin: 0 0 0.75rem;
+}
+
+/* ----- Form ----- */
+label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+
+.input-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+input[type="url"],
+input[type="text"] {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  background: #fff;
+  color: #1f2328;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+input:focus {
+  border-color: #3b82d4;
+  box-shadow: 0 0 0 3px rgba(59, 130, 212, 0.15);
+}
+
+button {
+  padding: 0.5rem 1.2rem;
+  background: #3b82d4;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+button:hover {
+  background: #2563c0;
+}
+
+/* ----- Status badge ----- */
+.badge {
+  display: inline-block;
+  margin-top: 0.6rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 99px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge.running  { background: #dbeafe; color: #1d4ed8; }
+.badge.done     { background: #dcfce7; color: #15803d; }
+.badge.blocked  { background: #fee2e2; color: #b91c1c; }
+.badge.error    { background: #fee2e2; color: #b91c1c; }
+.badge.idle     { background: #f3f4f6; color: #57606a; }
+
+/* ----- Log pane ----- */
+.log-pane {
+  background: #0d1117;
+  color: #c9d1d9;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  padding: 1rem;
+  border-radius: 8px;
+  height: 280px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ----- Documents ----- */
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0;
+}
+
+.doc-link {
+  display: inline-block;
+  padding: 0.45rem 1rem;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  text-decoration: none;
+  color: #3b82d4;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.doc-link:hover {
+  background: #f0f4ff;
+}
+
+.doc-delete-btn {
+  padding: 0.4rem 0.8rem;
+  background: #fff;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.doc-delete-btn:hover {
+  background: #fee2e2;
+  border-color: #ef4444;
+}
+
+/* ----- Chat ----- */
+.chat-history {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.75rem;
+  height: 240px;
+  overflow-y: auto;
+  margin-bottom: 0.75rem;
+}
+
+.chat-msg {
+  margin-bottom: 0.6rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  max-width: 85%;
+}
+
+.chat-msg.user {
+  background: #dbeafe;
+  color: #1d4ed8;
+  margin-left: auto;
+  text-align: right;
+}
+
+.chat-msg.agent {
+  background: #f3f4f6;
+  color: #1f2328;
+}
+
+.chat-msg.system {
+  background: #fff3cd;
+  color: #92400e;
+  font-style: italic;
+}
+
+#chat-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* ----- Utilities ----- */
+.hidden { display: none !important; }

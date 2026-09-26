@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Code-Scribe</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Code-Scribe</h1>
+      <p class="tagline">AI-powered documentation agent for GitHub repositories</p>
+    </header>
+
+    <main>
+      <!-- Job submission -->
+      <section id="submit-section">
+        <form id="job-form">
+          <label for="repo-url">GitHub Repository URL</label>
+          <div class="input-row">
+            <input
+              type="url"
+              id="repo-url"
+              name="repo_url"
+              placeholder="https://github.com/owner/repo"
+              required
+            />
+            <button type="submit" id="analyze-btn">Analyze</button>
+          </div>
+        </form>
+        <div id="status-badge" class="badge hidden">idle</div>
+      </section>
+
+      <!-- Progress log -->
+      <section id="log-section" class="hidden">
+        <h2>Progress</h2>
+        <div id="log-pane" class="log-pane" aria-live="polite"></div>
+      </section>
+
+      <!-- Documents -->
+      <section id="docs-section" class="hidden">
+        <h2>Generated Documents</h2>
+        <div id="doc-links"></div>
+      </section>
+
+      <!-- Chat -->
+      <section id="chat-section" class="hidden">
+        <h2>Ask About This Repository</h2>
+        <div id="chat-history" class="chat-history"></div>
+        <form id="chat-form">
+          <input type="text" id="chat-input" placeholder="Ask a question…" autocomplete="off" />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

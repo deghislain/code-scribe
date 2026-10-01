@@ -12,10 +12,23 @@ class TestLifespan:
         """The full lifespan (startup + shutdown) runs without raising."""
         from backend.main import app
         with patch("backend.main.start_scheduler") as mock_start, \
-             patch("backend.main.stop_scheduler") as mock_stop:
+             patch("backend.main.stop_scheduler") as mock_stop, \
+             patch("backend.main.cancel_running_jobs") as mock_cancel:
             with TestClient(app):
                 mock_start.assert_called_once()
             mock_stop.assert_called_once()
+            mock_cancel.assert_called_once()
+
+    def test_shutdown_cancels_running_jobs(self):
+        """cancel_running_jobs() is called before stop_scheduler() on shutdown."""
+        from backend.main import app
+        call_order = []
+        with patch("backend.main.cancel_running_jobs", side_effect=lambda: call_order.append("cancel")), \
+             patch("backend.main.stop_scheduler", side_effect=lambda: call_order.append("stop")), \
+             patch("backend.main.start_scheduler"):
+            with TestClient(app):
+                pass
+        assert call_order == ["cancel", "stop"]
 
     def test_lifespan_resumes_running_job(self, monkeypatch):
         """If a job is in 'running' state at startup, resume_job is scheduled."""

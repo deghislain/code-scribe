@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.logger import get_logger
 from backend.memory import store
 from backend.scheduler import start_scheduler, stop_scheduler
+from backend.agent.orchestrator import cancel_running_jobs
 from backend.api.routes import router as rest_router
 from backend.api.websocket import router as ws_router
 
@@ -20,25 +21,50 @@ log = get_logger(__name__)
 _FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 
+_MAX_RUNNING_SECONDS = 7200  # 2 hours — jobs stuck longer than this are marked blocked
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     log.info("Code-Scribe starting up")
     store.init_db()
 
-    # Resume any active job that didn't finish
+    # Resume any active job that didn't finish, or mark it blocked if it has
+    # been "running" for an unreasonably long time (server crashed mid-job).
+    import asyncio
+    from datetime import datetime, timezone
+
     job = store.get_active_job()
     if job and job.get("status") == "running":
-        log.info("Resuming interrupted job %d", job["id"])
-        import asyncio
-        from backend.agent.orchestrator import resume_job
-        asyncio.create_task(asyncio.to_thread(resume_job, job["id"]))
+        updated_at_str = job.get("updated_at", "")
+        stale = False
+        try:
+            updated_at = datetime.strptime(updated_at_str, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=timezone.utc
+            )
+            age_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
+            if age_seconds > _MAX_RUNNING_SECONDS:
+                stale = True
+        except (ValueError, TypeError):
+            pass
+
+        if stale:
+            log.warning(
+                "Job %d has been running for >%ds — marking blocked", job["id"], _MAX_RUNNING_SECONDS
+            )
+            store.update_job_status(job["id"], "blocked")
+        else:
+            log.info("Resuming interrupted job %d", job["id"])
+            from backend.agent.orchestrator import resume_job
+            asyncio.create_task(asyncio.to_thread(resume_job, job["id"]))
 
     start_scheduler()
     log.info("Code-Scribe ready")
     yield
     # Shutdown
     log.info("Code-Scribe shutting down")
+    cancel_running_jobs()
     stop_scheduler()
 
 

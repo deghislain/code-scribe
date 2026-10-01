@@ -71,7 +71,13 @@ def get_checkpoints(job_id: int):
 
 @router.get("/jobs/{job_id}/documents")
 def get_documents(job_id: int):
-    return store.get_documents(job_id)
+    """Return documents for a job, filtered to only those whose PDF file exists."""
+    docs = store.get_documents(job_id)
+    output_dir = Path(settings.OUTPUT_DIR)
+    return [
+        d for d in docs
+        if (output_dir / Path(d["file_path"]).name).exists()
+    ]
 
 
 @router.get("/documents/{filename}")

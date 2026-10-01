@@ -70,15 +70,27 @@ function connectLogs() {
 // ---------------------------------------------------------------------------
 // Poll job status until done / blocked
 // ---------------------------------------------------------------------------
+const POLL_TIMEOUT_MS = 90 * 60 * 1000; // 90 minutes
+
 function pollJobStatus() {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
   const interval = setInterval(async () => {
-    const job = await loadCurrentJob();
-    if (!job || job.status === "idle") return;
-    setStatus(job.status, job.status);
-    if (job.status === "done" || job.status === "blocked") {
-      clearInterval(interval);
-      if (job.id) loadDocuments(job.id);
-      show("chat-section");
+    try {
+      const resp = await fetch("/api/jobs/current");
+      if (!resp.ok) return;
+      const job = await resp.json();
+      if (!job || job.status === "idle") return;
+      setStatus(job.status, job.status);
+      const terminal = job.status === "done" || job.status === "blocked";
+      const timedOut = Date.now() > deadline;
+      if (terminal || timedOut) {
+        clearInterval(interval);
+        if (timedOut && !terminal) setStatus("blocked", "blocked");
+        if (job.id) loadDocuments(job.id);
+        show("chat-section");
+      }
+    } catch {
+      // network hiccup — keep polling
     }
   }, 3000);
 }
@@ -91,16 +103,19 @@ async function loadCurrentJob() {
     const resp = await fetch("/api/jobs/current");
     if (!resp.ok) return null;
     const job = await resp.json();
-    if (job.status === "idle") return job;
+    if (!job || job.status === "idle") return job;
     currentJobId = job.id;
     setStatus(job.status, job.status);
     show("log-section");
     if (job.status === "running") {
+      // Start log stream and a single polling loop — do NOT call pollJobStatus
+      // here via loadCurrentJob again, as that would create duplicate intervals.
       connectLogs();
       pollJobStatus();
+    } else {
+      if (job.id) loadDocuments(job.id);
+      show("chat-section");
     }
-    if (job.id) loadDocuments(job.id);
-    if (job.status === "done" || job.status === "blocked") show("chat-section");
     return job;
   } catch {
     return null;

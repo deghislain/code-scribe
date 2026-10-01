@@ -73,8 +73,11 @@ class TestGetDocuments:
         assert resp.status_code == 200
         assert resp.json() == []
 
-    def test_returns_documents(self, client, job_id):
-        store.save_document(job_id, "user_guide", "/outputs/guide.pdf")
+    def test_returns_documents(self, client, job_id, tmp_path, monkeypatch):
+        pdf = tmp_path / "guide.pdf"
+        pdf.write_bytes(b"%PDF test")
+        monkeypatch.setattr("backend.api.routes.settings.OUTPUT_DIR", str(tmp_path))
+        store.save_document(job_id, "user_guide", str(pdf))
         resp = client.get(f"/api/jobs/{job_id}/documents")
         assert resp.status_code == 200
         docs = resp.json()

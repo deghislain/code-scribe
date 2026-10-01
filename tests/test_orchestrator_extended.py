@@ -499,15 +499,16 @@ class TestRenderDocumentKwargs:
         with _patch_all(mocks):
             orchestrator.run_job(job_id)
 
-        # render_pdf must have been called exactly twice (user_guide + dev_guide)
-        assert mocks["pdf_renderer"].render_pdf.call_count == 2
+        # render_pdf is called twice per document (probe + final), so 4 total
+        # for user_guide + dev_guide.
+        assert mocks["pdf_renderer"].render_pdf.call_count == 4
 
-        # Inspect the first call (user_guide)
-        first_call = mocks["pdf_renderer"].render_pdf.call_args_list[0]
-        kw = first_call.kwargs if first_call.kwargs else {}
-        args = first_call.args if first_call.args else first_call[0]
+        # Inspect the final call for user_guide (index 1 — the version-stamped render)
+        final_call = mocks["pdf_renderer"].render_pdf.call_args_list[1]
+        kw = final_call.kwargs if final_call.kwargs else {}
+        args = final_call.args if final_call.args else final_call[0]
 
-        # version kwarg must be an integer ≥ 1
+        # version kwarg on the final render must be an integer ≥ 1
         version_val = kw.get("version") if kw else None
         if version_val is None and len(args) >= 5:
             version_val = args[4]
@@ -520,7 +521,7 @@ class TestRenderDocumentKwargs:
         assert isinstance(gen_at, str) and len(gen_at) > 0
 
     def test_second_render_increments_version(self, job_id, monkeypatch, tmp_path):
-        """Calling _render_document twice for the same doc_type passes version=2 on the second call."""
+        """Calling _render_document twice for the same doc_type stamps version=2 on the second final render."""
         mocks = _make_all_mocks(monkeypatch, tmp_path)
         output_dir = tmp_path / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -538,7 +539,11 @@ class TestRenderDocumentKwargs:
             orchestrator._render_document("<html/>", out_path, "End User Guide", job_id, "user_guide")
             orchestrator._render_document("<html/>", out_path, "End User Guide", job_id, "user_guide")
 
-        assert versions_seen == [1, 2]
+        # Each _render_document call does: probe (version=0) + final (version=N).
+        # So two calls → [0, 1, 0, 2] — the final versions are at indices 1 and 3.
+        assert versions_seen == [0, 1, 0, 2]
+        assert versions_seen[1] == 1   # first doc: version 1
+        assert versions_seen[3] == 2   # second doc (same type): version 2
 
 
 class TestSaveOutputSchema:
@@ -583,3 +588,54 @@ class TestSaveOutputSchema:
         assert data["repo_url"] == "https://github.com/user/repo"
         assert "stack_profile" in data
         assert "checkpoints" in data
+
+class TestCancelRunningJobs:
+    def test_cancel_does_nothing_when_no_job(self):
+        """cancel_running_jobs() is a no-op when no job is registered."""
+        orchestrator._unregister_job()
+        orchestrator._stop_event.clear()
+        # Should not raise
+        orchestrator.cancel_running_jobs()
+
+    def test_cancel_sets_stop_event_and_marks_blocked(self, job_id):
+        """cancel_running_jobs() sets the stop event and marks the job blocked."""
+        orchestrator._register_job(job_id)
+        assert not orchestrator._stop_event.is_set()
+
+        orchestrator.cancel_running_jobs()
+
+        assert orchestrator._stop_event.is_set()
+        updated = store.get_job(job_id)
+        assert updated["status"] == "blocked"
+
+    def test_cancel_terminates_app_proc(self, job_id):
+        """cancel_running_jobs() terminates a registered app subprocess."""
+        mock_proc = MagicMock()
+        orchestrator._register_job(job_id)
+        orchestrator.register_app_proc(mock_proc)
+
+        orchestrator.cancel_running_jobs()
+
+        mock_proc.terminate.assert_called_once()
+
+    def test_check_stop_returns_true_when_event_set(self, job_id):
+        """_check_stop() returns True and marks the job blocked when stop event is set."""
+        store.update_job_status(job_id, "running")
+        orchestrator._register_job(job_id)
+        orchestrator._stop_event.set()
+
+        result = orchestrator._check_stop(job_id)
+
+        assert result is True
+        assert store.get_job(job_id)["status"] == "blocked"
+        orchestrator._stop_event.clear()
+
+    def test_check_stop_returns_false_when_event_clear(self, job_id):
+        """_check_stop() returns False when no shutdown has been requested."""
+        orchestrator._register_job(job_id)
+        orchestrator._stop_event.clear()
+
+        result = orchestrator._check_stop(job_id)
+
+        assert result is False
+

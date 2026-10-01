@@ -108,10 +108,10 @@ class TestLlmSection:
 
 
 # ---------------------------------------------------------------------------
-# _run_sections_parallel
+# _run_sections_sequential
 # ---------------------------------------------------------------------------
 
-class TestRunSectionsParallel:
+class TestRunSectionsSequential:
     def test_returns_results_for_all_tasks(self):
         tasks = [
             (0, "Sec A", "ev", "instr", 512),
@@ -124,7 +124,7 @@ class TestRunSectionsParallel:
             return f"<p>body {call_count[0]}</p>"
 
         with patch("backend.agent.doc_generator.llm.ask", side_effect=fake_ask):
-            results = dg._run_sections_parallel(tasks)
+            results = dg._run_sections_sequential(tasks)
 
         assert set(results.keys()) == {0, 1}
         assert all(r.startswith("<p>") for r in results.values())

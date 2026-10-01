@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from backend.agent import llm
@@ -60,32 +59,19 @@ def _llm_section(
     return llm.ask(prompt, max_tokens=max_tokens)
 
 
-def _run_sections_parallel(tasks: list[tuple]) -> dict[int, str]:
+def _run_sections_sequential(tasks: list[tuple]) -> dict[int, str]:
     """
-    Execute LLM section tasks concurrently.  The global semaphore in llm.py
-    caps simultaneous in-flight Groq requests, so all tasks can be submitted
-    freely here — the rate limiting is enforced at the call site.
+    Execute LLM section tasks one at a time to avoid exceeding the LLM
+    token-per-minute rate limit.
 
     *tasks* is a list of (index, title, evidence, instruction, max_tokens).
     Returns a dict mapping index → rendered HTML string for that section body.
     """
     results: dict[int, str] = {}
-    log.debug("Dispatching %d LLM section tasks concurrently", len(tasks))
-
-    def _call(idx: int, title: str, evidence: str, instruction: str, max_tokens: int) -> tuple[int, str]:
+    log.debug("Generating %d LLM sections sequentially", len(tasks))
+    for idx, title, evidence, instruction, max_tokens in tasks:
         log.debug("Generating section: %s", title)
-        body = _llm_section(title, evidence, instruction, max_tokens)
-        return idx, body
-
-    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-        futures = {
-            pool.submit(_call, idx, title, ev, instr, mt): idx
-            for idx, title, ev, instr, mt in tasks
-        }
-        for future in as_completed(futures):
-            idx, body = future.result()
-            results[idx] = body
-
+        results[idx] = _llm_section(title, evidence, instruction, max_tokens)
     log.debug("All %d sections generated", len(tasks))
     return results
 
@@ -185,8 +171,7 @@ def generate_user_guide(
                        2048))
 
     log.info("Generating End User Guide for job %d (%d sections)", job_id, len(tasks) + 1)
-    # Fire all LLM calls concurrently
-    llm_results = _run_sections_parallel(tasks)
+    llm_results = _run_sections_sequential(tasks)
 
     # Assemble sections in order
     sections_html = ""
@@ -319,8 +304,7 @@ def generate_dev_guide(
     ]
 
     log.info("Generating Developer Guide for job %d (%d sections)", job_id, len(tasks) + 1)
-    # Fire all LLM calls concurrently
-    llm_results = _run_sections_parallel(tasks)
+    llm_results = _run_sections_sequential(tasks)
 
     sections_html = ""
 

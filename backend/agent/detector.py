@@ -66,17 +66,45 @@ def detect(repo_dir: str) -> StackProfile:
     gui_type = "none"
 
     # --- Python detection ----------------------------------------------------
-    if (root / "pyproject.toml").exists() or (root / "requirements.txt").exists() or (root / "setup.py").exists():
+    _py_dep_files = [
+        root / "pyproject.toml",
+        root / "requirements.txt",
+        root / "setup.py",
+        root / "uv.lock",
+        root / "Pipfile",
+        root / "Pipfile.lock",
+        root / "poetry.lock",
+    ]
+    if any(f.exists() for f in _py_dep_files):
         languages.add("Python")
-        if (root / "pyproject.toml").exists():
-            package_managers.append("pip")
-            build_system = "setuptools/pyproject"
-        elif (root / "requirements.txt").exists():
-            package_managers.append("pip")
 
-        # Python frameworks
-        reqs_text = _read_safe(root / "requirements.txt") + _read_safe(root / "pyproject.toml")
-        for fw, kw in [
+        # Package manager / build system detection
+        if (root / "uv.lock").exists():
+            package_managers.append("uv")
+            build_system = "uv"
+        if (root / "pyproject.toml").exists():
+            if "pip" not in package_managers:
+                package_managers.append("pip")
+            if build_system == "unknown":
+                build_system = "setuptools/pyproject"
+        elif (root / "requirements.txt").exists():
+            if "pip" not in package_managers:
+                package_managers.append("pip")
+        if (root / "Pipfile").exists() and "pipenv" not in package_managers:
+            package_managers.append("pipenv")
+
+        # Python framework detection — scan all available dep/lock files
+        reqs_text = (
+            _read_safe(root / "requirements.txt")
+            + _read_safe(root / "pyproject.toml")
+            + _read_safe(root / "Pipfile")
+            # uv.lock and poetry.lock list package names one per line; read a
+            # generous slice so we don't miss packages in large lock files.
+            + _read_safe(root / "uv.lock", max_bytes=65536)
+            + _read_safe(root / "poetry.lock", max_bytes=65536)
+        )
+
+        _fw_keywords = [
             ("Flask", "flask"),
             ("Django", "django"),
             ("FastAPI", "fastapi"),
@@ -84,7 +112,8 @@ def detect(repo_dir: str) -> StackProfile:
             ("Tkinter", "tkinter"),
             ("PyQt", "pyqt"),
             ("wxPython", "wxpython"),
-        ]:
+        ]
+        for fw, kw in _fw_keywords:
             if kw.lower() in reqs_text.lower():
                 frameworks.add(fw)
                 if fw in {"Flask", "Django", "FastAPI", "Streamlit"}:
@@ -93,6 +122,26 @@ def detect(repo_dir: str) -> StackProfile:
                 elif fw in {"Tkinter", "PyQt", "wxPython"}:
                     has_gui = True
                     gui_type = "desktop"
+
+        # Second-pass: if no framework found from dep files, scan .py source
+        # imports at the repo root.  This catches projects like Quizer where
+        # the only lockfile is uv.lock but the keyword appears under a long
+        # [[package]] block that was truncated.
+        if not frameworks:
+            for py_file in sorted(root.glob("*.py"))[:10]:
+                try:
+                    src = py_file.read_text(errors="replace")
+                except OSError:
+                    continue
+                for fw, kw in _fw_keywords:
+                    if f"import {kw}" in src.lower() or f"from {kw}" in src.lower():
+                        frameworks.add(fw)
+                        if fw in {"Flask", "Django", "FastAPI", "Streamlit"}:
+                            has_gui = True
+                            gui_type = "web"
+                        elif fw in {"Tkinter", "PyQt", "wxPython"}:
+                            has_gui = True
+                            gui_type = "desktop"
 
         # Python test frameworks
         for tf, kw in [("pytest", "pytest"), ("unittest", "unittest"), ("nose", "nose")]:
@@ -105,10 +154,27 @@ def detect(repo_dir: str) -> StackProfile:
                 test_frameworks.add("pytest")
                 break
 
-        # Entry points: check common patterns
+        # Entry points: check common patterns first
         for ep in ["app.py", "main.py", "manage.py", "run.py", "server.py"]:
             if (root / ep).exists():
                 entry_points.append(ep)
+
+        # Also include any root-level .py that imports a detected web framework
+        # (e.g. quizzer.py importing streamlit in the Quizer project).
+        detected_fw_kws = {kw for _, kw in _fw_keywords if _ in frameworks}
+        for py_file in sorted(root.glob("*.py")):
+            rel = py_file.name
+            if rel in entry_points:
+                continue
+            try:
+                src = py_file.read_text(errors="replace").lower()
+            except OSError:
+                continue
+            if any(
+                f"import {kw}" in src or f"from {kw}" in src
+                for kw in detected_fw_kws
+            ):
+                entry_points.append(rel)
 
     # --- JavaScript / TypeScript detection -----------------------------------
     pkg_json_path = root / "package.json"

@@ -249,3 +249,60 @@ class TestDetectLLMFallback:
             profile = detect(str(tmp_path))
         # Should not raise; languages will be empty list
         assert isinstance(profile["languages"], list)
+
+
+class TestDetectUvLock:
+    """Detector must handle projects that use uv with no requirements.txt/pyproject.toml."""
+
+    def test_detects_python_via_uv_lock(self, tmp_path):
+        (tmp_path / "uv.lock").write_text("# uv lockfile\n")
+        profile = detect(str(tmp_path))
+        assert "Python" in profile["languages"]
+
+    def test_detects_uv_package_manager(self, tmp_path):
+        (tmp_path / "uv.lock").write_text("")
+        profile = detect(str(tmp_path))
+        assert "uv" in profile["package_managers"]
+        assert profile["build_system"] == "uv"
+
+    def test_detects_streamlit_from_uv_lock(self, tmp_path):
+        """uv.lock contains 'name = "streamlit"' — detector must find it."""
+        lock_content = (
+            'version = 1\nrequires-python = ">=3.11"\n\n'
+            '[[package]]\nname = "streamlit"\nversion = "1.44.0"\n'
+        )
+        (tmp_path / "uv.lock").write_text(lock_content)
+        (tmp_path / "app.py").write_text("import streamlit as st\nst.title('hi')")
+        profile = detect(str(tmp_path))
+        assert "Streamlit" in profile["frameworks"]
+        assert profile["has_gui"] is True
+        assert profile["gui_type"] == "web"
+
+    def test_detects_streamlit_from_source_when_lock_truncated(self, tmp_path):
+        """When the lock file keyword scan misses (e.g. very large lock), fall back to .py imports."""
+        # Minimal lock file with no streamlit entry
+        (tmp_path / "uv.lock").write_text("version = 1\n")
+        (tmp_path / "quizzer.py").write_text(
+            'import streamlit as st\n\nif __name__ == "__main__":\n    st.title("Q")\n'
+        )
+        profile = detect(str(tmp_path))
+        assert "Streamlit" in profile["frameworks"]
+        assert profile["has_gui"] is True
+
+    def test_detects_framework_entry_point_from_source(self, tmp_path):
+        """Entry point must include the .py that imports the detected framework."""
+        (tmp_path / "uv.lock").write_text("version = 1\n")
+        (tmp_path / "quizzer.py").write_text(
+            'import streamlit as st\n\nif __name__ == "__main__":\n    st.title("Q")\n'
+        )
+        profile = detect(str(tmp_path))
+        assert "quizzer.py" in profile["entry_points"]
+
+    def test_uv_lock_does_not_override_pyproject_pip(self, tmp_path):
+        """When both uv.lock and pyproject.toml exist, both package managers are listed."""
+        (tmp_path / "uv.lock").write_text("")
+        (tmp_path / "pyproject.toml").write_text('[project]\nname="x"\n')
+        profile = detect(str(tmp_path))
+        assert "uv" in profile["package_managers"]
+        assert "pip" in profile["package_managers"]
+

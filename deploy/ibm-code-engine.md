@@ -90,32 +90,11 @@ ibmcloud ce secret create \
 
 ## Step 5 — Deploy the application
 
-First, find or create a registry secret:
-
-```bash
-# Check if one already exists
-ibmcloud ce registry list
-```
-
-If the list is empty, create one using an IAM API key:
-
-```bash
-ibmcloud iam api-key-create code-scribe-registry --output json
-# Copy the "apikey" value from the output, then:
-ibmcloud ce registry create \
-  --name icr-secret \
-  --server us.icr.io \
-  --username iamapikey \
-  --password <apikey-value>
-```
-
-Then deploy the application:
-
 ```bash
 ibmcloud ce application create \
   --name code-scribe \
   --image us.icr.io/code-scribe/code-scribe:latest \
-  --registry-secret icr-secret \
+  --registry-secret ce-auto-icr-us-south \
   --port 8080 \
   --cpu 0.5 \
   --memory 2G \
@@ -134,7 +113,7 @@ ibmcloud ce application create \
 | `--min-scale 0` | App scales to zero when idle — no charges while unused |
 | `--max-scale 1` | One instance cap keeps you inside the free tier |
 | `--cpu 0.5` / `--memory 2G` | Valid free-tier combination; enough for WeasyPrint + Groq calls |
-| `--registry-secret icr-secret` | IAM API key credential giving Code Engine pull access to your ICR namespace |
+| `--registry-secret ce-auto-icr-us-south` | Auto-generated secret Code Engine creates when you use ICR in the same account |
 
 After a few seconds the CLI prints a public HTTPS URL — open it in your browser.
 

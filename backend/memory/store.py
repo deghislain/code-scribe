@@ -44,15 +44,15 @@ def init_db() -> None:
 # Jobs
 # ---------------------------------------------------------------------------
 
-def create_job(repo_url: str, branch: str = "main", commit_sha: str | None = None) -> int:
+def create_job(repo_url: str, branch: str = "main", commit_sha: str | None = None, language: str = "English") -> int:
     """
     Always insert a new job row and return the new id.
     Use this when the user explicitly triggers a fresh analysis run.
     """
     with get_db_connection() as conn:
         cur = conn.execute(
-            "INSERT INTO jobs (repo_url, branch, commit_sha) VALUES (?, ?, ?)",
-            (repo_url, branch, commit_sha),
+            "INSERT INTO jobs (repo_url, branch, commit_sha, language) VALUES (?, ?, ?, ?)",
+            (repo_url, branch, commit_sha, language),
         )
         return cur.lastrowid
 

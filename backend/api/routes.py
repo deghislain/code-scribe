@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api")
 
 class JobRequest(BaseModel):
     repo_url: str
+    language: str = "English"
 
 
 class ChatRequest(BaseModel):
@@ -48,7 +49,7 @@ def _get_orchestrator():
 @router.post("/jobs")
 async def submit_job(body: JobRequest):
     """Accept a repo URL, create a fresh job record, start the orchestrator."""
-    job_id = store.create_job(body.repo_url)
+    job_id = store.create_job(body.repo_url, language=body.language)
     store.update_job_status(job_id, "running")
     orch = _get_orchestrator()
     asyncio.create_task(asyncio.to_thread(orch.run_job, job_id))

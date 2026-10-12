@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS documents (
 -- Migration: add version column to existing databases (no-op if already present)
 ALTER TABLE documents ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
 
+-- Migration: add language column to jobs (no-op if already present)
+ALTER TABLE jobs ADD COLUMN language TEXT NOT NULL DEFAULT 'English';
+
 -- learned_knowledge table
 CREATE TABLE IF NOT EXISTS learned_knowledge (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

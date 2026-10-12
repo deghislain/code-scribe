@@ -35,12 +35,12 @@ let ws = null;
 // ---------------------------------------------------------------------------
 // Job submission
 // ---------------------------------------------------------------------------
-async function submitJob(repoUrl) {
+async function submitJob(repoUrl, language) {
   try {
     const resp = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repo_url: repoUrl }),
+      body: JSON.stringify({ repo_url: repoUrl, language }),
     });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
@@ -232,8 +232,9 @@ $("job-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const url = $("repo-url").value.trim();
   if (!url) return;
+  const language = $("doc-language").value || "English";
   $("log-pane").innerHTML = "";
-  submitJob(url);
+  submitJob(url, language);
 });
 
 $("chat-form").addEventListener("submit", (e) => {

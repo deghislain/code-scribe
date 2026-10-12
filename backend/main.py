@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.logger import get_logger
@@ -73,7 +74,17 @@ app = FastAPI(title="Code-Scribe", lifespan=lifespan)
 app.include_router(rest_router)
 app.include_router(ws_router)
 
-# Serve the frontend SPA as static files at "/"
+
+@app.get("/", include_in_schema=False)
+async def serve_index(request: Request) -> FileResponse:
+    """Serve index.html with no-cache headers so browsers always revalidate."""
+    return FileResponse(
+        str(_FRONTEND_DIR / "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+# Serve remaining static assets (JS, CSS, images) with normal caching
 if _FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")
 

@@ -11,10 +11,10 @@ COPY backend/ ./backend/
 # Install Python deps into a prefix so we can copy them cleanly
 RUN pip install --prefix=/install --no-cache-dir .
 
-# Strip compiled extensions and test files to cut size
-RUN find /install -type d -name "tests"     -exec rm -rf {} + 2>/dev/null || true && \
-    find /install -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
-    find /install -name "*.dist-info"        -exec rm -rf {} + 2>/dev/null || true
+# Strip test directories and bytecode caches to cut size — keep *.dist-info
+# so that pip/importlib.metadata can still introspect installed packages.
+RUN find /install -type d -name "tests"       -exec rm -rf {} + 2>/dev/null || true && \
+    find /install -type d -name "__pycache__"  -exec rm -rf {} + 2>/dev/null || true
 
 
 # --- Runtime stage ---

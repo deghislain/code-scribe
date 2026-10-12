@@ -9,7 +9,7 @@ dependencies = [
     "groq",
     "weasyprint",
     "gitpython",
-    "apscheduler",
+    "apscheduler>=3.10,<4",
     "aiofiles",
     "python-dotenv",
     "jinja2",

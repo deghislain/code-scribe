@@ -49,13 +49,19 @@ class TestEmitAsync:
 class TestEmitSyncRunningLoop:
     @pytest.mark.asyncio
     async def test_emit_sync_schedules_future_in_running_loop(self):
-        """emit_sync called from within an async context (running loop) should enqueue via ensure_future."""
-        before = log_bus.qsize()
-        emit_sync("from async context")
-        # Give the scheduled coroutine a chance to run
-        await asyncio.sleep(0.05)
-        after = log_bus.qsize()
-        assert after > before
+        """emit_sync enqueues a message when _main_loop is set to the running loop."""
+        # Simulate what init_loop() does at app startup — point _main_loop at
+        # the loop that is running right now (provided by pytest-asyncio).
+        ws_module._main_loop = asyncio.get_running_loop()
+        try:
+            before = log_bus.qsize()
+            emit_sync("from async context")
+            # Give the scheduled coroutine a chance to run
+            await asyncio.sleep(0.05)
+            after = log_bus.qsize()
+            assert after > before
+        finally:
+            ws_module._main_loop = None  # restore so other tests aren't affected
 
 
 # ---------------------------------------------------------------------------

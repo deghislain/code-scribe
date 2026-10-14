@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator
+from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -16,6 +16,21 @@ log_bus: asyncio.Queue = asyncio.Queue()
 # Connected WebSocket clients
 _clients: list[WebSocket] = []
 
+# Reference to the main event loop, captured at startup by init_loop().
+# Worker threads use this to schedule onto the correct loop via
+# call_soon_threadsafe(), which is the only safe cross-thread mechanism.
+_main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def init_loop() -> None:
+    """
+    Capture the running event loop for later use by worker threads.
+    Must be called from an async context at application startup
+    (i.e. inside the FastAPI lifespan handler).
+    """
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
+
 
 async def emit(line: str) -> None:
     """Put a log line on the bus (called by agent steps)."""
@@ -24,17 +39,20 @@ async def emit(line: str) -> None:
 
 def emit_sync(line: str) -> None:
     """
-    Thread-safe log emission for synchronous agent code.
-    Creates a new event loop task if a running loop exists.
+    Thread-safe log emission for synchronous agent code running in a worker
+    thread (e.g. via asyncio.to_thread).
+
+    asyncio.get_event_loop() is unreliable in threads under Python 3.10+: in a
+    worker thread it creates a *new* non-running loop instead of returning the
+    main event loop, so loop.is_running() is False and puts land on an orphan
+    loop that nothing drains — silently dropping every log message.
+
+    The correct pattern is call_soon_threadsafe() against the loop captured
+    at startup, which safely hands the coroutine back to the event-loop thread.
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(emit(line))
-        else:
-            loop.run_until_complete(emit(line))
-    except RuntimeError:
-        pass
+    if _main_loop is None or not _main_loop.is_running():
+        return
+    _main_loop.call_soon_threadsafe(_main_loop.create_task, emit(line))
 
 
 @router.websocket("/ws/logs")

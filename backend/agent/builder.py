@@ -254,7 +254,7 @@ def start_app(repo_dir: str, stack_profile: dict, job_id: int) -> Optional[subpr
     frameworks = stack_profile.get("frameworks", [])
 
     cmd: Optional[list[str]] = None
-    port = 8080
+    port = _find_free_port()
 
     if "Python" in langs:
         if "Flask" in frameworks:

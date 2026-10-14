@@ -15,7 +15,7 @@ from backend.memory import store
 from backend.scheduler import start_scheduler, stop_scheduler
 from backend.agent.orchestrator import cancel_running_jobs
 from backend.api.routes import router as rest_router
-from backend.api.websocket import router as ws_router
+from backend.api.websocket import router as ws_router, init_loop
 
 log = get_logger(__name__)
 
@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI):
     # Startup
     log.info("Code-Scribe starting up")
     store.init_db()
+    init_loop()  # capture the running event loop for worker-thread log emission
 
     # Resume any active job that didn't finish, or mark it blocked if it has
     # been "running" for an unreasonably long time (server crashed mid-job).
@@ -37,7 +38,7 @@ async def lifespan(app: FastAPI):
     from datetime import datetime, timezone
 
     job = store.get_active_job()
-    if job and job.get("status") == "running":
+    if job and job.get("status") in ("running", "blocked"):
         updated_at_str = job.get("updated_at", "")
         stale = False
         try:
@@ -52,11 +53,14 @@ async def lifespan(app: FastAPI):
 
         if stale:
             log.warning(
-                "Job %d has been running for >%ds — marking blocked", job["id"], _MAX_RUNNING_SECONDS
+                "Job %d has been stuck for >%ds — leaving as blocked", job["id"], _MAX_RUNNING_SECONDS
             )
-            store.update_job_status(job["id"], "blocked")
         else:
-            log.info("Resuming interrupted job %d", job["id"])
+            # Resume: covers both "running" (clean restart) and "blocked" (container
+            # was killed mid-job by Code Engine scale-to-zero — job has valid
+            # checkpoints and can pick up where it left off).
+            log.info("Resuming interrupted job %d (was: %s)", job["id"], job.get("status"))
+            store.update_job_status(job["id"], "running")
             from backend.agent.orchestrator import resume_job
             asyncio.create_task(asyncio.to_thread(resume_job, job["id"]))
 

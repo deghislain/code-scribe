@@ -216,11 +216,71 @@ async function sendChat(message) {
   }
 }
 
+/**
+ * Render a subset of Markdown to safe HTML.
+ * Handles: tables, **bold**, `code`, and newlines.
+ * Uses textContent for all user-supplied strings to prevent XSS.
+ */
+function renderMarkdown(text) {
+  const lines = text.split("\n");
+  const out = [];
+  let inTable = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // --- Table rows (lines that start and end with |) ---
+    if (line.trim().startsWith("|")) {
+      // Separator row (---|---) — skip, used only for structure
+      if (/^\s*\|[\s|:-]+\|\s*$/.test(line)) {
+        if (!inTable) { out.push("<table>"); inTable = true; }
+        continue;
+      }
+      if (!inTable) { out.push("<table>"); inTable = true; }
+      const cells = line.trim().replace(/^\||\|$/g, "").split("|");
+      const tag = (i === 0 || lines[i - 1]?.trim() === "" || out[out.length - 1] === "<table>") ? "th" : "td";
+      const cellHtml = cells.map(c => {
+        const span = document.createElement("span");
+        span.textContent = c.trim();
+        return `<${tag}>${span.innerHTML}</${tag}>`;
+      }).join("");
+      out.push(`<tr>${cellHtml}</tr>`);
+      continue;
+    }
+
+    // Close an open table when a non-table line is encountered
+    if (inTable) { out.push("</table>"); inTable = false; }
+
+    // --- Empty line → paragraph break ---
+    if (line.trim() === "") { out.push("<br>"); continue; }
+
+    // Escape the line as plain text, then apply inline formatting
+    const span = document.createElement("span");
+    span.textContent = line;
+    let html = span.innerHTML;
+
+    // **bold**
+    html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    // `inline code`
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+    out.push(html + "<br>");
+  }
+
+  if (inTable) out.push("</table>");
+  return out.join("");
+}
+
 function appendChatMessage(role, text) {
   const history = $("chat-history");
   const msg = document.createElement("div");
   msg.className = `chat-msg ${role}`;
-  msg.textContent = text;
+  // Agent responses may contain Markdown; user/system messages are plain text.
+  if (role === "agent") {
+    msg.innerHTML = renderMarkdown(text);
+  } else {
+    msg.textContent = text;
+  }
   history.appendChild(msg);
   history.scrollTop = history.scrollHeight;
 }

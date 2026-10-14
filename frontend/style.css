@@ -233,12 +233,47 @@ button:hover {
 .chat-msg.agent {
   background: #f3f4f6;
   color: #1f2328;
+  max-width: 100%;
 }
 
 .chat-msg.system {
   background: #fff3cd;
   color: #92400e;
   font-style: italic;
+}
+
+/* Markdown table rendered inside agent chat messages */
+.chat-msg.agent table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+}
+
+.chat-msg.agent th,
+.chat-msg.agent td {
+  border: 1px solid #d1d5db;
+  padding: 0.35rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.chat-msg.agent th {
+  background: #e5e7eb;
+  font-weight: 600;
+}
+
+.chat-msg.agent tr:nth-child(even) td {
+  background: #f9fafb;
+}
+
+/* Inline code inside agent messages */
+.chat-msg.agent code {
+  background: #e5e7eb;
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.88em;
 }
 
 #chat-form {

@@ -1,0 +1,284 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Code-Scribe Agent — Review</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #1f2328;
+    background: #ffffff;
+    padding: 2rem 1rem;
+  }
+  .page { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+  .subtitle { color: #57606a; font-size: 0.9rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.05rem; font-weight: 700; margin: 2rem 0 0.6rem; color: #1f2328; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.4rem; }
+  h3 { font-size: 0.95rem; font-weight: 600; margin: 1.2rem 0 0.4rem; color: #1f2328; }
+  p { margin-bottom: 0.6rem; }
+  ul, ol { padding-left: 1.4rem; margin-bottom: 0.6rem; }
+  li { margin-bottom: 0.3rem; }
+  code { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 3px; padding: 1px 5px; font-size: 0.85em; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+  .tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 20px;
+    margin-right: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
+  }
+  .tag-arch { background: #e8f0fe; color: #1a56db; }
+  .tag-feature { background: #e6f4ea; color: #1e7e34; }
+  .tag-design { background: #fff3e0; color: #b45309; }
+  .tag-ux { background: #f3e8ff; color: #6d28d9; }
+  .tag-perf { background: #fff1f2; color: #be123c; }
+  .tag-sec { background: #fee2e2; color: #991b1b; }
+  .section-box {
+    background: #f7f8fa;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 1rem;
+  }
+  .section-box h3 { margin-top: 0; }
+  .score-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .score-card {
+    flex: 1 1 140px;
+    background: #f7f8fa;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    text-align: center;
+  }
+  .score-card .val { font-size: 1.8rem; font-weight: 700; color: #3b82d4; }
+  .score-card .lbl { font-size: 0.78rem; color: #57606a; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; font-size: 0.88rem; }
+  th { background: #f7f8fa; text-align: left; padding: 0.4rem 0.7rem; border: 1px solid #e5e7eb; font-weight: 600; }
+  td { padding: 0.4rem 0.7rem; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .priority { font-weight: 600; }
+  .p-high { color: #be123c; }
+  .p-med { color: #b45309; }
+  .p-low { color: #1e7e34; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #57606a; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Code-Scribe Agent — Review</h1>
+  <p class="subtitle">Architecture, Design &amp; Feature Improvement Suggestions  ·  Reviewed against <code>code-scribe-agent-plan.md</code></p>
+
+  
+  <div class="score-row">
+    <div class="score-card"><div class="val">✓</div><div class="lbl">Plan coverage</div></div>
+    <div class="score-card"><div class="val">13</div><div class="lbl">Pipeline steps implemented</div></div>
+    <div class="score-card"><div class="val">5</div><div class="lbl">Languages detected</div></div>
+    <div class="score-card"><div class="val">2</div><div class="lbl">Doc types generated</div></div>
+    <div class="score-card"><div class="val">21</div><div class="lbl">Test files</div></div>
+  </div>
+
+  
+  <h2>What's Working Well</h2>
+
+  <div class="section-box">
+    <h3>Checkpoint-based resume</h3>
+    <p>The 13-step orchestrator uses <code>CP_*</code> constants and an idempotent <code>set_checkpoint</code> upsert so any job can resume from its last successful step after a crash. The two-phase PDF rendering (<em>probe then stamp version</em>) ensures no orphan DB record is written if <code>WeasyPrint</code> fails. This is solid defensive design.</p>
+  </div>
+
+  <div class="section-box">
+    <h3>Layered stack detection</h3>
+    <p><code>detector.py</code> correctly sequences heuristics: dependency files → import scanning → LLM fallback. The second-pass scan of root-level <code>.py</code> imports when no framework keyword appears in lock files is a nice real-world workaround for truncated <code>uv.lock</code> blocks.</p>
+  </div>
+
+  <div class="section-box">
+    <h3>Self-contained injected widget</h3>
+    <p>The Streamlit widget (<code>chat_widget_st.py</code>) calls Groq directly and carries its own <code>.env</code> loader — no Code-Scribe backend process is needed at runtime. The idempotent guard comment (<code># code-scribe: chat_widget</code>) prevents double-injection cleanly.</p>
+  </div>
+
+  <div class="section-box">
+    <h3>Good memory abstractions</h3>
+    <p><code>store.py</code> keeps all SQLite access behind thin functions, uses <code>ON CONFLICT ... DO UPDATE</code> for safe upserts, and handles additive migrations by swallowing <code>duplicate column</code> errors — a pragmatic schema evolution strategy.</p>
+  </div>
+
+  
+  <h2>Architecture Observations</h2>
+
+  <div class="section-box">
+    <h3><span class="tag tag-arch">Architecture</span> Single-threaded orchestrator on a shared DB</h3>
+    <p>All 13 steps run sequentially in a single background thread, and the global <code>_current_job_id</code> / <code>_app_proc</code> state means only one job can ever run at a time. This is fine for a personal tool but will become a problem as soon as multiple users or repositories are queued simultaneously. The shared mutable globals bypass the lock in <code>cancel_running_jobs</code> because <code>_stop_event</code> is cleared inside <code>_register_job</code> without re-acquiring the same lock object — a subtle race on restart.</p>
+    <p><strong>Suggestion:</strong> Replace global mutable state with a per-job context object (a small dataclass) passed through the pipeline. Queue jobs with <code>asyncio.Queue</code> or a simple in-process task queue.</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-arch">Architecture</span> <code>builder.py</code> duplicates start-command logic</h3>
+    <p><code>start_app()</code> and <code>verify_chat_widget()</code> contain near-identical <code>if/elif</code> trees for building the launch command (~60 lines each). A future third caller (e.g. a restart-after-hot-reload feature) would require a third copy.</p>
+    <p><strong>Suggestion:</strong> Extract a <code>_build_launch_cmd(repo_dir, stack_profile) -&gt; list[str] | None</code> helper that both functions share.</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-arch">Architecture</span> <code>sync_monitor._regenerate</code> re-detects the stack every cycle</h3>
+    <p>On every poll cycle that finds new commits, <code>_regenerate</code> calls <code>detector.detect(repo_dir)</code> again — potentially making several LLM calls if the LLM fallback path is triggered. The stack rarely changes between commits.</p>
+    <p><strong>Suggestion:</strong> Read the cached <code>stack_detected</code> checkpoint evidence (which already contains the full <code>StackProfile</code> JSON) instead of re-running detection.</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-design">Design</span> Hard-coded LLM provider</h3>
+    <p>Groq is the only LLM backend. The <code>llm.py</code> module imports <code>groq</code> directly; there is no interface that a different provider could implement. Swapping to an OpenAI-compatible endpoint or a local Ollama instance requires modifying <code>llm.py</code> itself.</p>
+    <p><strong>Suggestion:</strong> Introduce a thin provider protocol (two methods: <code>ask</code>, <code>ask_structured</code>) and move Groq behind a <code>GroqProvider</code> implementation. The config gains a <code>LLM_PROVIDER</code> key. This is one file change with zero impact on callers.</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-design">Design</span> <code>doc_generator._tree_listing</code> is duplicated</h3>
+    <p>Identical functions <code>_tree_listing</code> and <code>_read_safe</code> appear in both <code>detector.py</code> and <code>doc_generator.py</code>. Any bug fix must be applied twice.</p>
+    <p><strong>Suggestion:</strong> Move these two utilities to a shared <code>backend/agent/utils.py</code> module and import from there.</p>
+  </div>
+
+  
+  <h2>Suggested New Features (Developer Value)</h2>
+
+  <table>
+    <thead>
+      <tr><th>Feature</th><th>Tag</th><th>Priority</th><th>Rationale</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Code-quality gate</strong> — run <code>ruff</code> / <code>eslint</code> / <code>clippy</code> and embed a quality summary section in the Developer Guide</td>
+        <td><span class="tag tag-feature">Feature</span></td>
+        <td class="priority p-high">High</td>
+        <td>Developers reviewing an unfamiliar codebase immediately want to know linting status, cyclomatic complexity hotspots, and unused imports before they start modifying code.</td>
+      </tr>
+      <tr>
+        <td><strong>Dependency vulnerability scan</strong> — run <code>pip-audit</code> / <code>npm audit</code> / <code>cargo audit</code> and add a security section with CVE findings to both guides</td>
+        <td><span class="tag tag-sec">Security</span></td>
+        <td class="priority p-high">High</td>
+        <td>Any agent that claims to document a codebase should surface known CVEs before a developer starts shipping the product.</td>
+      </tr>
+      <tr>
+        <td><strong>Test-coverage report</strong> — collect <code>pytest --cov</code> / <code>jest --coverage</code> output and embed a per-module coverage heat-map in the Developer Guide</td>
+        <td><span class="tag tag-feature">Feature</span></td>
+        <td class="priority p-high">High</td>
+        <td>Coverage data is already being computed during Step 5 (<em>run tests</em>); capturing the XML/JSON output costs nothing extra and gives developers a concrete quality baseline.</td>
+      </tr>
+      <tr>
+        <td><strong>Architecture diagram auto-generation</strong> — use the call-graph (e.g. <code>pycallgraph</code> or static AST analysis) to emit a Mermaid/Graphviz diagram embedded in the Developer Guide</td>
+        <td><span class="tag tag-feature">Feature</span></td>
+        <td class="priority p-med">Medium</td>
+        <td>Currently the architecture section is entirely LLM-generated prose. A real dependency graph gives developers an accurate starting point and is one of the first things a new contributor requests.</td>
+      </tr>
+      <tr>
+        <td><strong>Git blame / contributor analysis</strong> — parse <code>git shortlog</code> and <code>git log --stat</code> to add a <em>Codebase Activity</em> section: top contributors, most-changed files, commit frequency</td>
+        <td><span class="tag tag-feature">Feature</span></td>
+        <td class="priority p-med">Medium</td>
+        <td>This requires zero LLM calls, runs in milliseconds, and answers a question every developer taking over a project asks first: "who wrote this and is it actively maintained?"</td>
+      </tr>
+      <tr>
+        <td><strong>Interactive diff-based doc regeneration</strong> — when the sync monitor detects a commit, show the developer a diff of the sections that would change before re-rendering the PDF</td>
+        <td><span class="tag tag-ux">UX</span></td>
+        <td class="priority p-med">Medium</td>
+        <td>Currently re-generation is fully automatic and silent. Developers should be able to approve or veto a doc update, especially when the LLM may hallucinate when given a partial diff as context.</td>
+      </tr>
+      <tr>
+        <td><strong>Multi-repo workspace</strong> — allow submitting several related repos in one job; detect cross-repo dependencies and generate a combined System Overview document</td>
+        <td><span class="tag tag-arch">Architecture</span></td>
+        <td class="priority p-med">Medium</td>
+        <td>Microservice-based projects ship their documentation as scattered per-service guides. A unified view that stitches API contracts across repos has high value for teams.</td>
+      </tr>
+      <tr>
+        <td><strong>Markdown / Confluence export</strong> — in addition to PDF, emit documentation as Markdown files (for GitHub wikis) and optionally push to a Confluence space via REST API</td>
+        <td><span class="tag tag-feature">Feature</span></td>
+        <td class="priority p-med">Medium</td>
+        <td>Many developer teams never read PDFs; they live in wiki systems. Exporting to Markdown costs almost nothing given that the HTML is already generated section-by-section.</td>
+      </tr>
+      <tr>
+        <td><strong>OpenAPI / AsyncAPI contract extraction</strong> — detect <code>openapi.yaml</code> / Swagger files and auto-embed a rendered API reference (Redoc-style HTML) in the Developer Guide</td>
+        <td><span class="tag tag-feature">Feature</span></td>
+        <td class="priority p-low">Low</td>
+        <td>FastAPI and Django-REST-Framework projects already generate OpenAPI specs. Rendering them directly avoids redundant LLM inference for the API Reference section.</td>
+      </tr>
+      <tr>
+        <td><strong>Webhook / CI trigger</strong> — expose a <code>POST /api/hooks/github</code> endpoint that accepts GitHub push webhooks so documentation regenerates automatically on every PR merge without polling</td>
+        <td><span class="tag tag-feature">Feature</span></td>
+        <td class="priority p-low">Low</td>
+        <td>The current polling model (<code>POLL_INTERVAL_SECONDS = 300</code>) introduces up to 5 minutes of doc lag. A webhook listener drops that to seconds and removes the background scheduler entirely for teams using GitHub.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  
+  <h2>Design &amp; Code Quality Improvements</h2>
+
+  <div class="section-box">
+    <h3><span class="tag tag-perf">Perf</span> SQLite connections opened per call</h3>
+    <p>Every <code>store.*</code> function calls <code>get_db_connection()</code>, which opens a new <code>sqlite3.connect()</code>. During a 13-step pipeline with dozens of checkpoint writes this creates many open/close cycles. For a single-writer SQLite workload, a connection pool (<code>threading.local</code> with one connection per thread) would reduce I/O overhead and eliminate the repeated PRAGMA negotiation.</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-sec">Security</span> Credentials written to the target repo's <code>.env</code></h3>
+    <p><code>_inject_streamlit</code> writes <code>GROQ_API_KEY</code> and <code>GROQ_MODEL</code> directly into the analysed repository's <code>.env</code> file. If the repo is later pushed to GitHub (e.g. the developer runs <code>git push</code> in their cloned workspace), the API key leaks publicly. The <code>.gitignore</code> of the <em>target</em> repo may not list <code>.env</code>.</p>
+    <p><strong>Suggestion:</strong> Check <code>.gitignore</code> in the target repo before writing credentials; if <code>.env</code> is not ignored, emit a warning in the log and write a separate <code>.env.scribe</code> file (which is added to <code>.gitignore</code> automatically).</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-design">Design</span> <code>_run</code> timeout is fixed at 300 s for all languages</h3>
+    <p>A 300-second timeout is too short for Java Maven full builds but unnecessary for Go or Rust incremental builds. A large Maven project fetching artifacts cold will be killed with a cryptic <code>"Command timed out after 300 seconds"</code> error that maps to <code>blocked</code> status.</p>
+    <p><strong>Suggestion:</strong> Make the timeout a parameter to <code>_run</code> and pass language-specific values from <code>install_deps</code> / <code>build</code> (e.g. 600 s for Java, 120 s for Go/Rust).</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-design">Design</span> Acceptance criteria <code>14_documents_saved</code> is too weak</h3>
+    <p>The criterion passes if <em>any</em> document exists for the job, even if only one of two guides was generated. The plan requires both <code>user_guide</code> and <code>dev_guide</code>.</p>
+    <p><strong>Suggestion:</strong> Change the check to verify both <code>"user_guide"</code> and <code>"dev_guide"</code> are present in <code>doc_types</code>.</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-ux">UX</span> No progress percentage surfaced to the frontend</h3>
+    <p>The orchestrator logs step numbers (<code>[1/12]</code>, <code>[8/12]</code>) but the WebSocket and REST API only return raw checkpoint status. The frontend has no way to show a meaningful progress bar without re-counting checkpoints client-side.</p>
+    <p><strong>Suggestion:</strong> Add a <code>progress_pct</code> field to the job record (or compute it in the <code>GET /api/jobs/current</code> response) as <code>done_checkpoints / total_checkpoints * 100</code>.</p>
+  </div>
+
+  <div class="section-box">
+    <h3><span class="tag tag-design">Design</span> <code>generate_user_guide</code> hardcodes <code>sections: 13</code></h3>
+    <p>Both guide generators call <code>store.set_checkpoint(..., "done", {"sections": 13})</code> with a literal integer rather than the actual count of tasks generated. If a section is added or removed, the evidence becomes misleading.</p>
+    <p><strong>Suggestion:</strong> Pass <code>len(tasks)</code> instead of a hard-coded number.</p>
+  </div>
+
+  
+  <h2>Quick Reference — All Suggestions</h2>
+  <table>
+    <thead><tr><th>#</th><th>Area</th><th>Suggestion</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Builder</td><td>Extract shared <code>_build_launch_cmd()</code> from <code>start_app</code> / <code>verify_chat_widget</code></td><td>Small</td></tr>
+      <tr><td>2</td><td>Utils</td><td>Move <code>_tree_listing</code> / <code>_read_safe</code> to <code>backend/agent/utils.py</code></td><td>Small</td></tr>
+      <tr><td>3</td><td>Store</td><td>Thread-local connection pool instead of per-call <code>connect()</code></td><td>Small</td></tr>
+      <tr><td>4</td><td>Acceptance</td><td>Require both <code>user_guide</code> + <code>dev_guide</code> in criterion 14</td><td>Trivial</td></tr>
+      <tr><td>5</td><td>Doc gen</td><td>Replace hard-coded <code>{"sections": 13}</code> with <code>len(tasks)</code></td><td>Trivial</td></tr>
+      <tr><td>6</td><td>Orchestrator</td><td>Replace global mutable job state with per-job context dataclass</td><td>Medium</td></tr>
+      <tr><td>7</td><td>Sync monitor</td><td>Use cached <code>stack_detected</code> checkpoint instead of re-running detection</td><td>Small</td></tr>
+      <tr><td>8</td><td>Builder</td><td>Language-specific timeouts for <code>_run()</code></td><td>Small</td></tr>
+      <tr><td>9</td><td>LLM</td><td>Provider protocol + <code>GroqProvider</code> impl; <code>LLM_PROVIDER</code> config key</td><td>Medium</td></tr>
+      <tr><td>10</td><td>Security</td><td>Check <code>.gitignore</code> before writing credentials to target <code>.env</code></td><td>Small</td></tr>
+      <tr><td>11</td><td>API</td><td>Add <code>progress_pct</code> to job response</td><td>Small</td></tr>
+      <tr><td>12</td><td>Feature</td><td>Code-quality gate (ruff / eslint / clippy) in Developer Guide</td><td>Medium</td></tr>
+      <tr><td>13</td><td>Feature</td><td>Dependency vulnerability scan (pip-audit / npm audit)</td><td>Medium</td></tr>
+      <tr><td>14</td><td>Feature</td><td>Test-coverage report embedded in Developer Guide</td><td>Small</td></tr>
+      <tr><td>15</td><td>Feature</td><td>Architecture diagram (Mermaid / call graph)</td><td>Large</td></tr>
+      <tr><td>16</td><td>Feature</td><td>Git blame / contributor analysis section</td><td>Small</td></tr>
+      <tr><td>17</td><td>Feature</td><td>Markdown + Confluence export</td><td>Medium</td></tr>
+      <tr><td>18</td><td>Feature</td><td>OpenAPI contract auto-embed</td><td>Medium</td></tr>
+      <tr><td>19</td><td>Feature</td><td>GitHub webhook trigger (<code>POST /api/hooks/github</code>)</td><td>Medium</td></tr>
+      <tr><td>20</td><td>Feature</td><td>Multi-repo workspace + combined System Overview doc</td><td>Large</td></tr>
+      <tr><td>21</td><td>UX</td><td>Diff-preview before sync-triggered doc regeneration</td><td>Medium</td></tr>
+    </tbody>
+  </table>
+
+  <footer>Made with IBM Bob</footer>
+</div>
+</body>
+</html>

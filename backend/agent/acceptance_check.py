@@ -17,9 +17,10 @@ _CRITERIA: dict[str, list[str]] = {
     "8_user_guide_generated": ["user_guide_generated"],
     "9_dev_guide_generated": ["dev_guide_generated"],
     "10_chat_injected": ["chat_view_injected"],
-    "11_tests_rerun": ["tests_rerun"],
-    "12_memory_saved": ["memory_saved"],
-    "13_documents_saved": [],  # Checked via documents table
+    "11_chat_widget_verified": ["chat_widget_verified"],
+    "12_tests_rerun": ["tests_rerun"],
+    "13_memory_saved": ["memory_saved"],
+    "14_documents_saved": [],  # Checked via documents table
 }
 
 
@@ -36,9 +37,12 @@ def evaluate_acceptance_criteria(job_id: int) -> dict[str, str]:
 
     result: dict[str, str] = {}
     for criterion, required_cps in _CRITERIA.items():
-        if criterion == "13_documents_saved":
-            if doc_types:
+        if criterion == "14_documents_saved":
+            required = {"user_guide", "dev_guide"}
+            if required.issubset(doc_types):
                 result[criterion] = "pass"
+            elif doc_types:
+                result[criterion] = "partial"
             else:
                 result[criterion] = "fail"
             continue

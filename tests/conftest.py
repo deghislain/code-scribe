@@ -17,16 +17,21 @@ os.environ.setdefault("GROQ_API_KEY", "test-key")
 def _isolated_db(tmp_path, monkeypatch):
     """
     Redirect every test to its own fresh SQLite database.
-    Works by patching both settings.DB_PATH and the module-level
-    get_db_connection so every call in the test uses the tmp DB.
+    After each test, close the thread-local connection so the next test
+    gets a fresh connection pointed at a new DB path.
     """
     import backend.config as cfg
     import backend.memory.store as store
 
     db_file = str(tmp_path / "test.db")
     monkeypatch.setattr(cfg.settings, "DB_PATH", db_file)
+    # Close any leftover thread-local connection from a previous test so the
+    # new DB_PATH is picked up on first access in this test.
+    store.close_thread_connection()
     store.init_db()
     yield
+    # Teardown: close the connection so the temp file can be removed.
+    store.close_thread_connection()
 
 
 @pytest.fixture()

@@ -51,6 +51,15 @@ class TestGetCurrentJob:
         data = resp.json()
         assert data["id"] == job_id
 
+    def test_includes_progress_pct(self, client, job_id):
+        """Response always includes a progress_pct integer field."""
+        resp = client.get("/api/jobs/current")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "progress_pct" in data
+        assert isinstance(data["progress_pct"], int)
+        assert 0 <= data["progress_pct"] <= 100
+
 
 class TestGetCheckpoints:
     def test_empty_list_for_new_job(self, client, job_id):

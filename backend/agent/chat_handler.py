@@ -6,18 +6,12 @@ from pathlib import Path
 
 from backend.agent import llm, web_search
 from backend.agent.knowledge_matcher import find_relevant
+from backend.agent.utils import read_safe
 from backend.config import settings
 from backend.memory import store
 
 _MAX_FILE_CHARS = 3000   # cap per file to keep prompt size manageable
 _MAX_SOURCE_FILES = 4    # number of source files to include
-
-
-def _read_safe(path: Path, max_chars: int = _MAX_FILE_CHARS) -> str:
-    try:
-        return path.read_text(errors="replace")[:max_chars]
-    except OSError:
-        return ""
 
 
 def _build_repo_context(job_id: int) -> str:
@@ -39,7 +33,7 @@ def _build_repo_context(job_id: int) -> str:
 
     # README
     for name in ("README.md", "README.rst", "README.txt", "README"):
-        text = _read_safe(repo_dir / name)
+        text = read_safe(repo_dir / name)
         if text:
             parts.append(f"=== {name} ===\n{text}")
             break
@@ -47,7 +41,7 @@ def _build_repo_context(job_id: int) -> str:
     # Dependency / lock files
     for name in ("requirements.txt", "pyproject.toml", "package.json",
                  "Pipfile", "go.mod", "Cargo.toml", "pom.xml", "build.gradle"):
-        text = _read_safe(repo_dir / name, max_chars=2000)
+        text = read_safe(repo_dir / name, max_chars=2000)
         if text:
             parts.append(f"=== {name} ===\n{text}")
 
@@ -59,7 +53,7 @@ def _build_repo_context(job_id: int) -> str:
                 break
             if any(skip in str(f) for skip in ("node_modules", "__pycache__", ".git", "test")):
                 continue
-            text = _read_safe(f, max_chars=1500)
+            text = read_safe(f, max_chars=1500)
             if text:
                 parts.append(f"=== {f.relative_to(repo_dir)} ===\n{text}")
                 source_count += 1

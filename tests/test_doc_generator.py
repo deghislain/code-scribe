@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import backend.agent.doc_generator as dg
+from backend.agent.utils import read_safe, tree_listing
 from backend.memory import store
 
 
@@ -39,20 +40,20 @@ class TestReadSafe:
     def test_reads_existing_file(self, tmp_path):
         f = tmp_path / "README.md"
         f.write_text("hello world")
-        assert dg._read_safe(f) == "hello world"
+        assert read_safe(f) == "hello world"
 
     def test_truncates_to_max_chars(self, tmp_path):
         f = tmp_path / "big.txt"
         f.write_text("a" * 5000)
-        result = dg._read_safe(f, max_chars=100)
+        result = read_safe(f, max_chars=100)
         assert len(result) == 100
 
     def test_returns_empty_on_missing_file(self, tmp_path):
-        assert dg._read_safe(tmp_path / "nonexistent.txt") == ""
+        assert read_safe(tmp_path / "nonexistent.txt") == ""
 
 
 # ---------------------------------------------------------------------------
-# _tree_listing
+# tree_listing
 # ---------------------------------------------------------------------------
 
 class TestTreeListing:
@@ -60,7 +61,7 @@ class TestTreeListing:
         (tmp_path / "main.py").write_text("x")
         (tmp_path / "sub").mkdir()
         (tmp_path / "sub" / "util.py").write_text("y")
-        result = dg._tree_listing(tmp_path)
+        result = tree_listing(tmp_path)
         assert "main.py" in result
 
     def test_skips_hidden_and_cache(self, tmp_path):
@@ -68,14 +69,14 @@ class TestTreeListing:
         (tmp_path / ".git" / "HEAD").write_text("ref")
         (tmp_path / "__pycache__").mkdir()
         (tmp_path / "__pycache__" / "a.pyc").write_text("")
-        result = dg._tree_listing(tmp_path)
+        result = tree_listing(tmp_path)
         assert ".git" not in result
         assert "__pycache__" not in result
 
     def test_truncates_after_max_files(self, tmp_path):
         for i in range(15):
             (tmp_path / f"file_{i}.py").write_text("")
-        result = dg._tree_listing(tmp_path, max_files=5)
+        result = tree_listing(tmp_path, max_files=5)
         assert "truncated" in result
 
 
@@ -143,7 +144,7 @@ class TestGenerateUserGuide:
         (tmp_repo / "README.md").write_text("# Test App\nA simple test app.")
 
         with patch("backend.agent.doc_generator.llm.ask", return_value="<p>content</p>"):
-            html, doc_title, generated_by, version_label = dg.generate_user_guide(
+            html, doc_title, generated_by, version_label, section_count = dg.generate_user_guide(
                 job_id, stack, ui_map, checkpoints, str(tmp_repo)
             )
 
@@ -178,7 +179,7 @@ class TestGenerateDevGuide:
         (tmp_repo / "requirements.txt").write_text("fastapi\n")
 
         with patch("backend.agent.doc_generator.llm.ask", return_value="<p>dev content</p>"):
-            html, doc_title, generated_by, version_label = dg.generate_dev_guide(
+            html, doc_title, generated_by, version_label, section_count = dg.generate_dev_guide(
                 job_id, stack, checkpoints, str(tmp_repo)
             )
 

@@ -84,11 +84,21 @@ def _map_to_sections(changed_files: list[str]) -> set[str]:
 
 def _regenerate(job_id: int, repo_dir: str, sections: set[str], new_sha: str) -> None:
     """Re-run doc generation and PDF rendering for the affected sections."""
-    from backend.agent import detector, doc_generator, pdf_renderer
+    from backend.agent import doc_generator, pdf_renderer
     from backend.config import settings as cfg
     output_dir = Path(cfg.OUTPUT_DIR)
 
-    stack_profile = detector.detect(repo_dir)
+    # Use the cached stack profile from the checkpoint rather than re-running
+    # detection (which may trigger LLM calls for ambiguous stacks).
+    cp_stack = store.get_checkpoint(job_id, "stack_detected")
+    if cp_stack and isinstance(cp_stack.get("evidence"), dict):
+        stack_profile = cp_stack["evidence"]
+        log.debug("[sync] Using cached stack profile from checkpoint")
+    else:
+        from backend.agent import detector
+        log.debug("[sync] No cached stack profile — running detection")
+        stack_profile = detector.detect(repo_dir)
+
     checkpoints = store.get_checkpoints(job_id)
 
     def _render(html: str, out_path: str, title: str, doc_type: str) -> None:
@@ -105,7 +115,7 @@ def _regenerate(job_id: int, repo_dir: str, sections: set[str], new_sha: str) ->
 
     if "dev_guide" in sections:
         log.info("[sync] Regenerating Developer Guide (SHA %s)", new_sha[:8])
-        html = doc_generator.generate_dev_guide(job_id, stack_profile, checkpoints, repo_dir)
+        html, *_ = doc_generator.generate_dev_guide(job_id, stack_profile, checkpoints, repo_dir)
         out_path = str(output_dir / f"{job_id}_dev_guide.pdf")
         _render(html, out_path, "Developer Guide", "dev_guide")
         log.info("[sync] Developer Guide PDF updated: %s", out_path)
@@ -118,7 +128,7 @@ def _regenerate(job_id: int, repo_dir: str, sections: set[str], new_sha: str) ->
             ui_map = {"routes": routes, "base_url": ""}
 
         log.info("[sync] Regenerating End User Guide (SHA %s)", new_sha[:8])
-        html = doc_generator.generate_user_guide(job_id, stack_profile, ui_map, checkpoints, repo_dir)
+        html, *_ = doc_generator.generate_user_guide(job_id, stack_profile, ui_map, checkpoints, repo_dir)
         out_path = str(output_dir / f"{job_id}_user_guide.pdf")
         _render(html, out_path, "End User Guide", "user_guide")
         log.info("[sync] End User Guide PDF updated: %s", out_path)

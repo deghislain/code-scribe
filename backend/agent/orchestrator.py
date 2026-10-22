@@ -6,6 +6,7 @@ import json
 import subprocess
 import threading
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from backend.config import settings
@@ -14,66 +15,67 @@ from backend.memory import store
 
 log = get_logger(__name__)
 
+
 # ---------------------------------------------------------------------------
-# Job registry — tracks the currently running job so the server can cancel it
-# on shutdown.
+# Per-job context — replaces the old module-level globals so multiple jobs
+# can be tracked independently and there is no shared mutable state race.
 # ---------------------------------------------------------------------------
+
+@dataclass
+class _JobContext:
+    job_id: int
+    stop_event: threading.Event = field(default_factory=threading.Event)
+    app_proc: subprocess.Popen | None = None
+
 
 _lock = threading.Lock()
-_current_job_id: int | None = None
-_stop_event = threading.Event()
-_app_proc: subprocess.Popen | None = None
+_active_jobs: dict[int, _JobContext] = {}
 
 
-def _register_job(job_id: int) -> None:
-    global _current_job_id
+def _register_job(job_id: int) -> _JobContext:
+    ctx = _JobContext(job_id=job_id)
     with _lock:
-        _current_job_id = job_id
-        _stop_event.clear()
+        _active_jobs[job_id] = ctx
+    return ctx
 
 
-def _unregister_job() -> None:
-    global _current_job_id, _app_proc
+def _unregister_job(job_id: int) -> None:
     with _lock:
-        _current_job_id = None
-        _app_proc = None
+        _active_jobs.pop(job_id, None)
 
 
-def register_app_proc(proc: subprocess.Popen | None) -> None:
+def register_app_proc(job_id: int, proc: subprocess.Popen | None) -> None:
     """Called by the orchestrator after start_app to track the child process."""
-    global _app_proc
     with _lock:
-        _app_proc = proc
+        ctx = _active_jobs.get(job_id)
+        if ctx is not None:
+            ctx.app_proc = proc
 
 
 def cancel_running_jobs() -> None:
     """
-    Signal the running orchestrator thread to stop and kill any spawned app
-    process.  Called from the server shutdown hook.  Does nothing if no job
-    is active.
+    Signal all running orchestrator threads to stop and kill any spawned app
+    processes.  Called from the server shutdown hook.
     """
     with _lock:
-        job_id = _current_job_id
-        proc = _app_proc
+        snapshot = list(_active_jobs.values())
 
-    if job_id is None:
-        return
+    for ctx in snapshot:
+        log.info("Shutdown: cancelling job %d", ctx.job_id)
+        ctx.stop_event.set()
 
-    log.info("Shutdown: cancelling job %d", job_id)
-    _stop_event.set()
-
-    if proc is not None:
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
+        if ctx.app_proc is not None:
             try:
-                proc.kill()
+                ctx.app_proc.terminate()
+                ctx.app_proc.wait(timeout=5)
             except Exception:
-                pass
+                try:
+                    ctx.app_proc.kill()
+                except Exception:
+                    pass
 
-    store.update_job_status(job_id, "blocked")
-    log.info("Shutdown: job %d marked blocked", job_id)
+        store.update_job_status(ctx.job_id, "blocked")
+        log.info("Shutdown: job %d marked blocked", ctx.job_id)
 
 
 
@@ -129,6 +131,7 @@ CP_GUI_INSPECTED = "gui_inspected"
 CP_USER_GUIDE = "user_guide_generated"
 CP_DEV_GUIDE = "dev_guide_generated"
 CP_CHAT_INJECTED = "chat_view_injected"
+CP_CHAT_VERIFIED = "chat_widget_verified"
 CP_TESTS_RERUN = "tests_rerun"
 CP_MEMORY_SAVED = "memory_saved"
 
@@ -146,7 +149,9 @@ def _repo_name(repo_url: str) -> str:
 
 def _check_stop(job_id: int) -> bool:
     """Return True if a shutdown has been requested; log and mark the job blocked."""
-    if _stop_event.is_set():
+    with _lock:
+        ctx = _active_jobs.get(job_id)
+    if ctx is not None and ctx.stop_event.is_set():
         log.info("Job %d: stop requested — aborting", job_id)
         store.update_job_status(job_id, "blocked")
         return True
@@ -167,7 +172,7 @@ def run_job(job_id: int) -> None:
     try:
         _run_job_inner(job_id, job)
     finally:
-        _unregister_job()
+        _unregister_job(job_id)
 
 
 def _run_job_inner(job_id: int, job: dict) -> None:
@@ -269,7 +274,7 @@ def _run_job_inner(job_id: int, job: dict) -> None:
         try:
             from backend.agent import builder
             app_proc = builder.start_app(repo_dir, stack_profile, job_id)
-            register_app_proc(app_proc)
+            register_app_proc(job_id, app_proc)
             cp = store.get_checkpoint(job_id, CP_APP_LAUNCHED)
             if cp and isinstance(cp.get("evidence"), dict):
                 port = cp["evidence"].get("port")
@@ -313,7 +318,7 @@ def _run_job_inner(job_id: int, job: dict) -> None:
         log.info("[8/12] Generating End User Guide")
         try:
             from backend.agent import doc_generator
-            html, doc_title, generated_by_label, version_label = doc_generator.generate_user_guide(
+            html, doc_title, generated_by_label, version_label, section_count = doc_generator.generate_user_guide(
                 job_id, stack_profile, ui_map, checkpoints, repo_dir, language=language
             )
             out_path = str(output_dir / f"{job_id}_user_guide.pdf")
@@ -322,7 +327,7 @@ def _run_job_inner(job_id: int, job: dict) -> None:
                 generated_by_label=generated_by_label,
                 version_label=version_label,
             )
-            store.set_checkpoint(job_id, CP_USER_GUIDE, "done", {"sections": 13})
+            store.set_checkpoint(job_id, CP_USER_GUIDE, "done", {"sections": section_count})
             log.info("[8/12] End User Guide saved: %s", out_path)
         except Exception as exc:
             store.set_checkpoint(job_id, CP_USER_GUIDE, "blocked", {"error": str(exc)})
@@ -335,7 +340,7 @@ def _run_job_inner(job_id: int, job: dict) -> None:
         log.info("[9/12] Generating Developer Guide")
         try:
             from backend.agent import doc_generator
-            html, doc_title, generated_by_label, version_label = doc_generator.generate_dev_guide(
+            html, doc_title, generated_by_label, version_label, section_count = doc_generator.generate_dev_guide(
                 job_id, stack_profile, checkpoints, repo_dir, language=language
             )
             out_path = str(output_dir / f"{job_id}_dev_guide.pdf")
@@ -344,7 +349,7 @@ def _run_job_inner(job_id: int, job: dict) -> None:
                 generated_by_label=generated_by_label,
                 version_label=version_label,
             )
-            store.set_checkpoint(job_id, CP_DEV_GUIDE, "done", {"sections": 14})
+            store.set_checkpoint(job_id, CP_DEV_GUIDE, "done", {"sections": section_count})
             log.info("[9/12] Developer Guide saved: %s", out_path)
         except Exception as exc:
             store.set_checkpoint(job_id, CP_DEV_GUIDE, "blocked", {"error": str(exc)})
@@ -354,27 +359,46 @@ def _run_job_inner(job_id: int, job: dict) -> None:
 
     # --- Step 10: Inject chat view -------------------------------------------
     if not _is_done(checkpoints, CP_CHAT_INJECTED):
-        log.info("[10/12] Injecting chat widget")
+        log.info("[10/13] Injecting chat widget")
         try:
             from backend.agent import chat_injector
             chat_injector.inject(repo_dir, stack_profile, ui_map, job_id)
-            log.info("[10/12] Chat widget injected")
+            log.info("[10/13] Chat widget injected")
         except Exception as exc:
             store.set_checkpoint(job_id, CP_CHAT_INJECTED, "blocked", {"error": str(exc)})
-            log.error("[10/12] Chat injection failed: %s", exc)
+            log.error("[10/13] Chat injection failed: %s", exc)
     checkpoints = store.get_checkpoints(job_id)
     if _check_stop(job_id): return
 
-    # --- Step 11: Re-run tests -----------------------------------------------
+    # --- Step 11: Verify chat widget -----------------------------------------
+    # Re-launch the target app with GROQ_API_KEY forwarded and confirm the
+    # widget starts cleanly (Streamlit health endpoint returns 200).
+    if not _is_done(checkpoints, CP_CHAT_VERIFIED):
+        log.info("[11/13] Verifying chat widget")
+        try:
+            from backend.agent import builder
+            result = builder.verify_chat_widget(repo_dir, stack_profile, job_id)
+            log.info(
+                "[11/13] Widget verification complete (status=%s, health=%s)",
+                result["status"],
+                result.get("stderr") or "ok",
+            )
+        except Exception as exc:
+            store.set_checkpoint(job_id, CP_CHAT_VERIFIED, "blocked", {"error": str(exc)})
+            log.error("[11/13] Widget verification failed: %s", exc)
+    checkpoints = store.get_checkpoints(job_id)
+    if _check_stop(job_id): return
+
+    # --- Step 12: Re-run tests -----------------------------------------------
     if not _is_done(checkpoints, CP_TESTS_RERUN):
-        log.info("[11/12] Re-running tests after chat injection")
+        log.info("[12/13] Re-running tests after chat injection")
         try:
             from backend.agent import builder
             result = builder.run_tests(repo_dir, stack_profile, job_id, checkpoint_name=CP_TESTS_RERUN)
-            log.info("[11/12] Re-test complete (exit_code=%s)", result["exit_code"])
+            log.info("[12/13] Re-test complete (exit_code=%s)", result["exit_code"])
         except Exception as exc:
             store.set_checkpoint(job_id, CP_TESTS_RERUN, "blocked", {"error": str(exc)})
-            log.error("[11/12] Re-test failed: %s", exc)
+            log.error("[12/13] Re-test failed: %s", exc)
     checkpoints = store.get_checkpoints(job_id)
 
     # Stop app if we started it
@@ -386,16 +410,16 @@ def _run_job_inner(job_id: int, job: dict) -> None:
         except Exception as exc:
             log.warning("Failed to stop application process: %s", exc)
 
-    # --- Step 12: Persist memory + produce output schema --------------------
+    # --- Step 13: Persist memory + produce output schema --------------------
     if not _is_done(checkpoints, CP_MEMORY_SAVED):
-        log.info("[12/12] Persisting memory and writing output schema")
+        log.info("[13/13] Persisting memory and writing output schema")
         try:
             _save_output_schema(job_id, repo_url, stack_profile, checkpoints, output_dir)
             store.set_checkpoint(job_id, CP_MEMORY_SAVED, "done", {})
-            log.info("[12/12] Output schema written")
+            log.info("[13/13] Output schema written")
         except Exception as exc:
             store.set_checkpoint(job_id, CP_MEMORY_SAVED, "blocked", {"error": str(exc)})
-            log.error("[12/12] Output schema write failed: %s", exc)
+            log.error("[13/13] Output schema write failed: %s", exc)
 
     store.update_job_status(job_id, "done")
     log.info("Job %d complete", job_id)

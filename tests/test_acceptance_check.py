@@ -18,10 +18,11 @@ class TestEvaluateAcceptanceCriteria:
             "repo_cloned", "stack_detected", "deps_installed",
             "build_done", "tests_run", "app_launched", "gui_inspected",
             "user_guide_generated", "dev_guide_generated",
-            "chat_view_injected", "tests_rerun", "memory_saved",
+            "chat_view_injected", "chat_widget_verified", "tests_rerun", "memory_saved",
         ]
         self._set_done(job_id, *cp_names)
         store.save_document(job_id, "user_guide", "/a.pdf")
+        store.save_document(job_id, "dev_guide", "/b.pdf")
 
         result = evaluate_acceptance_criteria(job_id)
 
@@ -41,16 +42,22 @@ class TestEvaluateAcceptanceCriteria:
 
     def test_documents_criterion_fails_when_no_docs(self, job_id):
         result = evaluate_acceptance_criteria(job_id)
-        assert result["13_documents_saved"] == "fail"
+        assert result["14_documents_saved"] == "fail"
 
-    def test_documents_criterion_passes_with_doc(self, job_id):
+    def test_documents_criterion_partial_with_one_doc(self, job_id):
         store.save_document(job_id, "user_guide", "/path.pdf")
         result = evaluate_acceptance_criteria(job_id)
-        assert result["13_documents_saved"] == "pass"
+        assert result["14_documents_saved"] == "partial"
 
-    def test_returns_dict_with_all_13_criteria(self, job_id):
+    def test_documents_criterion_passes_with_both_docs(self, job_id):
+        store.save_document(job_id, "user_guide", "/path_u.pdf")
+        store.save_document(job_id, "dev_guide", "/path_d.pdf")
         result = evaluate_acceptance_criteria(job_id)
-        assert len(result) == 13
+        assert result["14_documents_saved"] == "pass"
+
+    def test_returns_dict_with_all_14_criteria(self, job_id):
+        result = evaluate_acceptance_criteria(job_id)
+        assert len(result) == 14
 
     def test_not_applicable_treated_as_partial(self, job_id):
         store.set_checkpoint(job_id, "gui_inspected", "not_applicable")

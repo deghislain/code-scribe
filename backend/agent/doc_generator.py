@@ -6,34 +6,11 @@ import json
 from pathlib import Path
 
 from backend.agent import llm
+from backend.agent.utils import read_safe, tree_listing
 from backend.logger import get_logger
 from backend.memory import store
 
 log = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _read_safe(path: Path, max_chars: int = 2000) -> str:
-    try:
-        return path.read_text(errors="replace")[:max_chars]
-    except OSError:
-        return ""
-
-
-def _tree_listing(root: Path, max_files: int = 100) -> str:
-    lines: list[str] = []
-    for i, p in enumerate(sorted(root.rglob("*"))):
-        if i >= max_files:
-            lines.append("... (truncated)")
-            break
-        parts = p.relative_to(root).parts
-        if any(part.startswith(".") or part in {"__pycache__", "node_modules", ".git"} for part in parts):
-            continue
-        lines.append(str(p.relative_to(root)))
-    return "\n".join(lines)
 
 
 def _section(title: str, body: str) -> str:
@@ -206,15 +183,15 @@ def generate_user_guide(
     checkpoints: list[dict],
     repo_dir: str,
     language: str = "English",
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str, str, int]:
     """
     Generate the End User Guide as a complete HTML string.
-    Returns ``(html, doc_title, generated_by_label, version_label)`` — all
-    strings are already translated into *language*.
+    Returns ``(html, doc_title, generated_by_label, version_label, section_count)`` —
+    all strings are already translated into *language*.
     """
     root = Path(repo_dir)
-    readme = _read_safe(root / "README.md") or _read_safe(root / "README.rst")
-    tree = _tree_listing(root)
+    readme = read_safe(root / "README.md") or read_safe(root / "README.rst")
+    tree = tree_listing(root)
     frameworks = ", ".join(stack_profile.get("frameworks", ["unknown"]))
     lang_labels = ", ".join(stack_profile.get("languages", ["unknown"]))
     routes_text = "\n".join(
@@ -324,7 +301,7 @@ def generate_user_guide(
     sections_html += _section(t["section_support"],          llm_results[10])
     sections_html += _section(t["section_appendices"],       llm_results[11])
 
-    return sections_html, t["doc_title"], t["generated_by"], t["version_label"]
+    return sections_html, t["doc_title"], t["generated_by"], t["version_label"], len(tasks) + 1
 
 
 # ---------------------------------------------------------------------------
@@ -337,15 +314,15 @@ def generate_dev_guide(
     checkpoints: list[dict],
     repo_dir: str,
     language: str = "English",
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str, str, int]:
     """
     Generate the Developer / Code Guide as a complete HTML string.
-    Returns ``(html, doc_title, generated_by_label, version_label)`` — all
-    strings are already translated into *language*.
+    Returns ``(html, doc_title, generated_by_label, version_label, section_count)`` —
+    all strings are already translated into *language*.
     """
     root = Path(repo_dir)
-    readme = _read_safe(root / "README.md") or _read_safe(root / "README.rst")
-    tree = _tree_listing(root)
+    readme = read_safe(root / "README.md") or read_safe(root / "README.rst")
+    tree = tree_listing(root)
     lang_labels = ", ".join(stack_profile.get("languages", ["unknown"]))
     frameworks = ", ".join(stack_profile.get("frameworks", ["unknown"]))
     build_system = stack_profile.get("build_system", "unknown")
@@ -369,10 +346,10 @@ def generate_dev_guide(
             except OSError:
                 pass
     source_context = "\n\n".join(source_snippets[:6])
-    req_text = _read_safe(root / "requirements.txt") + _read_safe(root / "pyproject.toml")[:1000]
+    req_text = read_safe(root / "requirements.txt") + read_safe(root / "pyproject.toml")[:1000]
     changelog = (
-        _read_safe(root / "CHANGELOG.md")
-        or _read_safe(root / "CHANGELOG")
+        read_safe(root / "CHANGELOG.md")
+        or read_safe(root / "CHANGELOG")
         or "[UNVERIFIED] No CHANGELOG found."
     )
 
@@ -469,4 +446,5 @@ def generate_dev_guide(
         f"<pre>{changelog[:2000]}</pre>",
     )
 
-    return sections_html, t["doc_title"], t["generated_by"], t["version_label"]
+    # +1 for static overview, +1 for static changelog (neither in tasks list)
+    return sections_html, t["doc_title"], t["generated_by"], t["version_label"], len(tasks) + 2

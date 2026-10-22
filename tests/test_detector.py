@@ -4,43 +4,44 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.agent.detector import detect, _read_safe, _tree_listing
+from backend.agent.detector import detect
+from backend.agent.utils import read_safe, tree_listing
 
 
 class TestReadSafe:
     def test_returns_content(self, tmp_path):
         f = tmp_path / "f.txt"
         f.write_text("hello world")
-        assert _read_safe(f) == "hello world"
+        assert read_safe(f) == "hello world"
 
-    def test_truncates_at_max_bytes(self, tmp_path):
+    def test_truncates_at_max_chars(self, tmp_path):
         f = tmp_path / "big.txt"
         f.write_text("x" * 5000)
-        result = _read_safe(f, max_bytes=100)
+        result = read_safe(f, max_chars=100)
         assert len(result) == 100
 
     def test_missing_file_returns_empty(self, tmp_path):
-        assert _read_safe(tmp_path / "nonexistent.txt") == ""
+        assert read_safe(tmp_path / "nonexistent.txt") == ""
 
 
 class TestTreeListing:
     def test_lists_files(self, tmp_path):
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("")
-        tree = _tree_listing(tmp_path)
+        tree = tree_listing(tmp_path)
         assert "src/app.py" in tree or "src" in tree
 
     def test_skips_hidden_dirs(self, tmp_path):
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "HEAD").write_text("ref:")
         (tmp_path / "app.py").write_text("")
-        tree = _tree_listing(tmp_path)
+        tree = tree_listing(tmp_path)
         assert ".git" not in tree
 
     def test_truncated_when_too_many_files(self, tmp_path):
         for i in range(210):
             (tmp_path / f"file{i}.py").write_text("")
-        tree = _tree_listing(tmp_path, max_files=5)
+        tree = tree_listing(tmp_path, max_files=5)
         assert "truncated" in tree
 
 

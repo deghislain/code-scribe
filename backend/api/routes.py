@@ -56,13 +56,28 @@ async def submit_job(body: JobRequest):
     return {"job_id": job_id, "status": "running"}
 
 
+# Total canonical pipeline steps — used to compute progress percentage.
+_TOTAL_CHECKPOINTS = 13
+
+
+def _compute_progress(checkpoints: list[dict]) -> int:
+    """Return pipeline progress as an integer 0–100."""
+    if not checkpoints:
+        return 0
+    done = sum(1 for cp in checkpoints if cp["status"] == "done")
+    return min(100, round(done / _TOTAL_CHECKPOINTS * 100))
+
+
 @router.get("/jobs/current")
 def get_current_job():
-    """Return the most recent job."""
+    """Return the most recent job, augmented with a progress_pct field."""
     job = store.get_active_job()
     if not job:
         return {"status": "idle"}
-    return job
+    checkpoints = store.get_checkpoints(job["id"])
+    result = dict(job)
+    result["progress_pct"] = _compute_progress(checkpoints)
+    return result
 
 
 @router.get("/jobs/{job_id}/checkpoints")

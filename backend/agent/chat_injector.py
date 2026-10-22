@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import textwrap
 from pathlib import Path
 
 from backend.agent import llm
@@ -64,104 +63,198 @@ def _collect_source_snippets(repo_dir: str, stack_profile: dict) -> str:
 # The canonical widget filename written into the target repo.
 _STREAMLIT_WIDGET_FILENAME = "chat_widget_st.py"
 
-_STREAMLIT_WIDGET_TEMPLATE = textwrap.dedent("""\
-    # code-scribe: chat_widget
-    \"\"\"
-    In-app chat widget for {app_name}.
-    Rendered as a Streamlit sidebar component.
-    Wired in by Code-Scribe — do not remove the guard comment above.
-    \"\"\"
-    import os
-    import uuid
-    import requests
-    import streamlit as st
 
-    # URL of the Code-Scribe backend that answers chat questions.
-    # Override by setting the CODE_SCRIBE_URL environment variable before
-    # starting Streamlit, e.g.: export CODE_SCRIBE_URL=http://localhost:8001/api/chat
-    _CODE_SCRIBE_URL = os.environ.get("CODE_SCRIBE_URL", "http://localhost:{port}/api/chat")
-    _JOB_ID = {job_id}
+def _is_gitignored(root: "Path", filename: str) -> bool:
+    """
+    Return True if *filename* appears to be covered by the repo's .gitignore.
+    Uses a simple line-by-line substring match — sufficient for the common
+    cases of ``.env`` and ``.env.scribe``.
+    """
+    gitignore = root / ".gitignore"
+    if not gitignore.exists():
+        return False
+    try:
+        for line in gitignore.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Match exact filename, wildcard *.env, or directory-relative paths
+            if line == filename or line.endswith("/" + filename):
+                return True
+            if line.startswith("*") and filename.endswith(line.lstrip("*")):
+                return True
+    except OSError:
+        pass
+    return False
 
-    # App-specific guidance for the LLM that answers user questions.
-    _APP_CONTEXT = \"\"\"\\
-    You are a helpful in-app assistant for {app_name}.
-    {app_description}
-    Guide users step-by-step through the app's features.
-    Keep answers short and concrete.
-    \"\"\"
-
-
-    def _call_code_scribe(message: str) -> str:
-        \"\"\"POST to Code-Scribe and return the answer string.\"\"\"
-        try:
-            resp = requests.post(
-                _CODE_SCRIBE_URL,
-                json={{"job_id": _JOB_ID, "message": message}},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.json().get("response") or "No response received."
-        except requests.exceptions.ConnectionError:
-            return (
-                "Could not reach the Code-Scribe backend. "
-                f"Make sure it is running and reachable at {{_CODE_SCRIBE_URL}}."
-            )
-        except Exception as exc:
-            return f"Error: {{exc}}"
-
-
-    def render_chat_widget() -> None:
-        \"\"\"Render the chat panel in the Streamlit sidebar.\"\"\"
-        with st.sidebar:
-            st.markdown("### 💬 App Assistant")
-            st.caption("Ask me anything about using this app.")
-
-            # Initialise session state on first render
-            if "cs_chat_history" not in st.session_state:
-                st.session_state["cs_chat_history"] = []
-            if "cs_session_id" not in st.session_state:
-                st.session_state["cs_session_id"] = str(uuid.uuid4())
-            if "cs_pending_input" not in st.session_state:
-                st.session_state["cs_pending_input"] = None
-
-            # Phase 1: if the previous rerun stored a pending user message,
-            # call the backend NOW before painting anything, so the answer is
-            # ready when we render the history loop below.
-            if st.session_state["cs_pending_input"] is not None:
-                user_input = st.session_state["cs_pending_input"]
-                st.session_state["cs_pending_input"] = None
-                history_text = "\\n".join(
-                    f"{{m['role'].upper()}}: {{m['content']}}"
-                    for m in st.session_state["cs_chat_history"]
-                )
-                full_message = (
-                    f"{{_APP_CONTEXT}}\\n\\n"
-                    + (f"Conversation so far:\\n{{history_text}}\\n\\n" if history_text else "")
-                    + f"USER: {{user_input}}"
-                )
-                answer = _call_code_scribe(full_message)
-                st.session_state["cs_chat_history"].append(
-                    {{"role": "assistant", "content": answer}}
-                )
-
-            # Phase 2: render the complete history — this is the ONLY place
-            # messages are displayed, so nothing appears twice.
-            for msg in st.session_state["cs_chat_history"]:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
-
-            # Phase 3: accept new input. st.chat_input MUST be the last widget
-            # rendered so it anchors to the bottom of the sidebar.
-            # On submit: append user turn to history, store pending input,
-            # rerun — Phase 1 picks it up and calls the backend.
-            user_input = st.chat_input("How can I help?", key="cs_chat_input")
-            if user_input:
-                st.session_state["cs_chat_history"].append(
-                    {{"role": "user", "content": user_input}}
-                )
-                st.session_state["cs_pending_input"] = user_input
-                st.rerun()
-""")
+_STREAMLIT_WIDGET_TEMPLATE = (
+"# code-scribe: chat_widget\n"
+'"""\n'
+"In-app chat widget for {app_name}.\n"
+"Rendered as a Streamlit sidebar component.\n"
+"Wired in by Code-Scribe — do not remove the guard comment above.\n"
+"\n"
+"Self-contained: calls the Groq LLM directly using the GROQ_API_KEY\n"
+"environment variable. No Code-Scribe backend process is required at\n"
+"runtime — only Streamlit and the groq package need to be installed.\n"
+'"""\n'
+"import os\n"
+"import uuid\n"
+"from pathlib import Path\n"
+"import streamlit as st\n"
+"\n"
+"# ---------------------------------------------------------------------------\n"
+"# .env loader — stdlib only, no python-dotenv required\n"
+"# Tries both '.env' and '.env.scribe' so credentials injected into either\n"
+"# file by Code-Scribe are picked up automatically.\n"
+"# ---------------------------------------------------------------------------\n"
+"\n"
+"def _load_env_file(env_file):\n"
+"    try:\n"
+"        for raw in env_file.read_text(errors='replace').splitlines():\n"
+"            line = raw.strip()\n"
+"            if not line or line.startswith('#') or '=' not in line:\n"
+"                continue\n"
+"            k, _, v = line.partition('=')\n"
+"            k = k.strip()\n"
+"            v = v.strip()\n"
+"            if v and v[0] in ('\"', \"'\") and v[0] == v[-1]:\n"
+"                v = v[1:-1]\n"
+"            if k and k not in os.environ:\n"
+"                os.environ[k] = v\n"
+"    except OSError:\n"
+"        pass\n"
+"\n"
+"def _load_dotenv():\n"
+"    directory = Path(__file__).parent\n"
+"    for _ in range(6):\n"
+"        for fname in ('.env', '.env.scribe'):\n"
+"            env_file = directory / fname\n"
+"            if env_file.is_file():\n"
+"                _load_env_file(env_file)\n"
+"        if (directory / '.env').is_file() or (directory / '.env.scribe').is_file():\n"
+"            break\n"
+"        parent = directory.parent\n"
+"        if parent == directory:\n"
+"            break\n"
+"        directory = parent\n"
+"\n"
+"_load_dotenv()\n"
+"\n"
+"# ---------------------------------------------------------------------------\n"
+"# Configuration\n"
+"# ---------------------------------------------------------------------------\n"
+"\n"
+"_GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')\n"
+"_GROQ_MODEL   = os.environ.get('GROQ_MODEL', 'llama-3.3-70b-versatile')\n"
+"\n"
+"_APP_NAME = '{app_name}'\n"
+"_APP_CONTEXT = (\n"
+"    'You are a helpful in-app assistant for {app_name}. '\n"
+"    '{app_description} '\n"
+"    'Guide users step-by-step through the app features. '\n"
+"    'Keep answers short and concrete.'\n"
+")\n"
+"\n"
+"# ---------------------------------------------------------------------------\n"
+"# Source-context snapshot (loaded once per session)\n"
+"# ---------------------------------------------------------------------------\n"
+"_MAX_FILES  = 5\n"
+"_MAX_CHARS  = 1500\n"
+"_SKIP_DIRS  = {{'node_modules', '__pycache__', '.git', 'tests', 'test'}}\n"
+"_WIDGET_DIR = Path(__file__).parent\n"
+"\n"
+"\n"
+"def _load_source_context():\n"
+"    snippets = []\n"
+"    seen = set()\n"
+"    for ext in ('*.py', '*.js', '*.ts', '*.jsx', '*.tsx'):\n"
+"        for f in sorted(_WIDGET_DIR.rglob(ext)):\n"
+"            if f in seen:\n"
+"                continue\n"
+"            if any(skip in f.parts for skip in _SKIP_DIRS):\n"
+"                continue\n"
+"            if f.name == Path(__file__).name:\n"
+"                continue\n"
+"            seen.add(f)\n"
+"            try:\n"
+"                text = f.read_text(errors='replace')[:_MAX_CHARS]\n"
+"            except OSError:\n"
+"                continue\n"
+"            rel = f.relative_to(_WIDGET_DIR)\n"
+"            snippets.append('=== ' + str(rel) + ' ===\\n' + text)\n"
+"            if len(snippets) >= _MAX_FILES:\n"
+"                break\n"
+"        if len(snippets) >= _MAX_FILES:\n"
+"            break\n"
+"    return '\\n\\n'.join(snippets)\n"
+"\n"
+"\n"
+"# ---------------------------------------------------------------------------\n"
+"# LLM call\n"
+"# ---------------------------------------------------------------------------\n"
+"\n"
+"def _ask_groq(messages):\n"
+"    if not _GROQ_API_KEY:\n"
+"        return (\n"
+"            'GROQ_API_KEY is not set. '\n"
+"            'Add it to your environment or a .env file and restart Streamlit.'\n"
+"        )\n"
+"    try:\n"
+"        from groq import Groq\n"
+"        client = Groq(api_key=_GROQ_API_KEY)\n"
+"        response = client.chat.completions.create(\n"
+"            model=_GROQ_MODEL,\n"
+"            messages=messages,\n"
+"            max_tokens=1024,\n"
+"        )\n"
+"        return response.choices[0].message.content or 'No response.'\n"
+"    except Exception as exc:\n"
+"        return 'LLM error: ' + str(exc)\n"
+"\n"
+"\n"
+"# ---------------------------------------------------------------------------\n"
+"# Widget renderer\n"
+"# ---------------------------------------------------------------------------\n"
+"\n"
+"def render_chat_widget():\n"
+"    with st.sidebar:\n"
+"        st.markdown('### \U0001f4ac App Assistant')\n"
+"        st.caption('Ask me anything about using this app.')\n"
+"        if 'cs_chat_history' not in st.session_state:\n"
+"            st.session_state['cs_chat_history'] = []\n"
+"        if 'cs_session_id' not in st.session_state:\n"
+"            st.session_state['cs_session_id'] = str(uuid.uuid4())\n"
+"        if 'cs_source_context' not in st.session_state:\n"
+"            st.session_state['cs_source_context'] = _load_source_context()\n"
+"        if 'cs_pending_input' not in st.session_state:\n"
+"            st.session_state['cs_pending_input'] = None\n"
+"        if st.session_state['cs_pending_input'] is not None:\n"
+"            user_input = st.session_state['cs_pending_input']\n"
+"            st.session_state['cs_pending_input'] = None\n"
+"            source_ctx = st.session_state['cs_source_context']\n"
+"            system_content = _APP_CONTEXT\n"
+"            if source_ctx:\n"
+"                system_content += ('\\n\\nKey source files for reference:\\n\\n' + source_ctx)\n"
+"            system_msg = {{'role': 'system', 'content': system_content}}\n"
+"            prior = [{{'role': m['role'], 'content': m['content']}}\n"
+"                     for m in st.session_state['cs_chat_history']]\n"
+"            msgs = [system_msg] + prior + [{{'role': 'user', 'content': user_input}}]\n"
+"            answer = _ask_groq(msgs)\n"
+"            st.session_state['cs_chat_history'].append(\n"
+"                {{'role': 'assistant', 'content': answer}}\n"
+"            )\n"
+"        for msg in st.session_state['cs_chat_history']:\n"
+"            with st.chat_message(msg['role']):\n"
+"                st.markdown(msg['content'])\n"
+"        user_input = st.chat_input('How can I help?', key='cs_chat_input')\n"
+"        if user_input:\n"
+"            st.session_state['cs_chat_history'].append(\n"
+"                {{'role': 'user', 'content': user_input}}\n"
+"            )\n"
+"            st.session_state['cs_pending_input'] = user_input\n"
+"            st.rerun()\n"
+)
 
 _STREAMLIT_INJECT_CALL = "\n\n# code-scribe: chat_widget — wired by Code-Scribe\nfrom chat_widget_st import render_chat_widget\nrender_chat_widget()\n"
 
@@ -170,16 +263,14 @@ def _generate_streamlit_widget(
     repo_dir: str,
     stack_profile: dict,
     ui_map: dict,
-    job_id: int,
-    code_scribe_port: int = 8000,
 ) -> str:
     """
     Return the Python source code of the Streamlit chat widget module.
     Uses the LLM to produce an app-specific description, then fills the template.
 
-    code_scribe_port: the port Code-Scribe is actually listening on.  Written
-    into the widget as the default fallback URL so that the widget works out of
-    the box without any manual env-var configuration.
+    The widget is fully self-contained: it calls Groq directly at runtime using
+    the GROQ_API_KEY environment variable.  No Code-Scribe process is needed
+    once the widget has been injected.
     """
     source_context = _collect_source_snippets(repo_dir, stack_profile)
     routes = "\n".join(
@@ -210,26 +301,37 @@ def _generate_streamlit_widget(
         app_description = "This app helps you complete tasks interactively."
 
     return _STREAMLIT_WIDGET_TEMPLATE.format(
-        app_name=app_name,
-        app_description=app_description,
-        job_id=job_id,
-        port=code_scribe_port,
+        app_name=_sanitize_for_template(app_name),
+        app_description=_sanitize_for_template(app_description),
     )
 
 
-def _code_scribe_port() -> int:
-    """Return the port Code-Scribe is configured to serve on."""
-    try:
-        from backend.config import settings as _cfg
-        # settings.DB_PATH is always set; we infer the port from the uvicorn
-        # invocation.  There is no dedicated PORT setting — the binary always
-        # uses 8000 by default, but the actual process may be on a different
-        # port.  We read the environment variable first so that operators can
-        # set CODE_SCRIBE_PORT without touching config.py.
-        import os
-        return int(os.environ.get("CODE_SCRIBE_PORT", 8000))
-    except Exception:
-        return 8000
+def _sanitize_for_template(text: str) -> str:
+    """
+    Ensure *text* is safe to embed inside a triple-quoted Python string.
+
+    Replaces Unicode typographic punctuation with ASCII equivalents and strips
+    any triple-quote sequences that would prematurely close the string literal.
+    The LLM sometimes returns curly quotes, non-breaking hyphens, or em-dashes
+    that are valid Unicode but look identical to regular ASCII in the output,
+    yet cause SyntaxErrors when the generated file is later parsed by Python.
+    """
+    replacements = {
+        "\u2018": "'",   # left single quotation mark
+        "\u2019": "'",   # right single quotation mark / apostrophe
+        "\u201c": '"',   # left double quotation mark
+        "\u201d": '"',   # right double quotation mark
+        "\u2011": "-",   # non-breaking hyphen
+        "\u2013": "-",   # en dash
+        "\u2014": "-",   # em dash
+        "\u2026": "...", # horizontal ellipsis
+        "\u00a0": " ",   # non-breaking space
+    }
+    for bad, good in replacements.items():
+        text = text.replace(bad, good)
+    # Triple-quotes inside a triple-quoted string would end it prematurely.
+    text = text.replace('"""', "'''")
+    return text
 
 
 def _inject_streamlit(
@@ -242,24 +344,81 @@ def _inject_streamlit(
     Full Streamlit injection path.
 
     1. Write chat_widget_st.py to the repo root.
-    2. Append the render_chat_widget() call to the main entry-point file,
+    2. Copy GROQ_API_KEY / GROQ_MODEL from Code-Scribe's .env into a .env
+       file at the repo root so the widget can find them when the user runs
+       `streamlit run` in a fresh terminal without exporting variables.
+    3. Wire the render_chat_widget() call into the entry-point file,
        guarded by the import guard so it is idempotent.
 
     Returns list of modified/created files (relative to repo_dir).
     """
+    import os as _os
     root = Path(repo_dir)
     modified: list[str] = []
 
-    # Step 1 — write the widget module, using the real Code-Scribe port
-    widget_code = _generate_streamlit_widget(
-        repo_dir, stack_profile, ui_map, job_id,
-        code_scribe_port=_code_scribe_port(),
-    )
+    # Step 1 — write the self-contained widget module
+    widget_code = _generate_streamlit_widget(repo_dir, stack_profile, ui_map)
     widget_path = root / _STREAMLIT_WIDGET_FILENAME
     widget_path.write_text(widget_code)
     modified.append(_STREAMLIT_WIDGET_FILENAME)
 
-    # Step 2 — find the entry-point and append the wiring call
+    # Step 1b — copy Groq credentials so the widget can load them without
+    # requiring a shell export.
+    # Security: if '.env' is not listed in the repo's .gitignore we write to
+    # '.env.scribe' instead (and add it to .gitignore) to avoid accidental
+    # credential leaks when the developer runs `git push`.
+    groq_keys = {
+        k: _os.environ[k]
+        for k in ("GROQ_API_KEY", "GROQ_MODEL")
+        if k in _os.environ
+    }
+    if groq_keys:
+        if _is_gitignored(root, ".env"):
+            target_env_name = ".env"
+        else:
+            target_env_name = ".env.scribe"
+            # Ensure the safe filename is git-ignored
+            gitignore_path = root / ".gitignore"
+            try:
+                existing_gi = gitignore_path.read_text(errors="replace") if gitignore_path.exists() else ""
+                if ".env.scribe" not in existing_gi:
+                    with gitignore_path.open("a") as gi:
+                        if existing_gi and not existing_gi.endswith("\n"):
+                            gi.write("\n")
+                        gi.write(".env.scribe\n")
+                    modified.append(".gitignore")
+            except OSError:
+                pass
+
+        repo_env_path = root / target_env_name
+        # Read existing content so we don't overwrite values the repo already has
+        existing_lines: list[str] = []
+        existing_keys: set[str] = set()
+        if repo_env_path.exists():
+            try:
+                for raw in repo_env_path.read_text(errors="replace").splitlines():
+                    existing_lines.append(raw)
+                    if "=" in raw and not raw.strip().startswith("#"):
+                        existing_keys.add(raw.split("=", 1)[0].strip())
+            except OSError:
+                pass
+        new_lines = [f"{k}={v}" for k, v in groq_keys.items() if k not in existing_keys]
+        if new_lines:
+            with repo_env_path.open("a") as fh:
+                if existing_lines and existing_lines[-1].strip():
+                    fh.write("\n")  # ensure we start on a new line
+                fh.write("# Added by Code-Scribe — required by the injected chat widget\n")
+                fh.write("\n".join(new_lines) + "\n")
+            modified.append(target_env_name)
+
+    # Step 2 — find the entry-point and wire the render call into it.
+    # If the file wraps all its logic in `if __name__ == "__main__":` (common
+    # in scripts that double as Streamlit apps), appending at the end of the
+    # file places the call *outside* that guard.  Streamlit never executes the
+    # __main__ block, so both the app logic and the widget would be skipped.
+    # In that case we insert the wiring call *inside* the guard block (indented)
+    # so that `streamlit run` (top-level execution) sees it, while
+    # `python <file>` also works because it enters __main__.
     entry = _find_streamlit_entry(root, stack_profile)
     if entry:
         entry_path = root / entry
@@ -268,7 +427,19 @@ def _inject_streamlit(
         except OSError:
             existing = ""
         if _STREAMLIT_WIDGET_GUARD not in existing:
-            entry_path.write_text(existing + _STREAMLIT_INJECT_CALL)
+            if 'if __name__ == "__main__":' in existing:
+                # Insert before the __main__ guard so the widget renders for
+                # both `streamlit run` (skips __main__) and `python` (enters it).
+                inject_top_level = (
+                    "\n# code-scribe: chat_widget — wired by Code-Scribe\n"
+                    "from chat_widget_st import render_chat_widget\n"
+                    "render_chat_widget()\n"
+                )
+                insertion_point = existing.index('if __name__ == "__main__":')
+                updated = existing[:insertion_point] + inject_top_level + existing[insertion_point:]
+            else:
+                updated = existing + _STREAMLIT_INJECT_CALL
+            entry_path.write_text(updated)
             modified.append(entry)
 
     return modified
@@ -284,14 +455,19 @@ def _find_streamlit_entry(root: Path, stack_profile: dict) -> str | None:
        — this is the file you pass to ``streamlit run``.
     3. First root-level .py that actively calls ``st.<something>``.
     4. First root-level .py that merely imports streamlit.
+
+    The Code-Scribe-injected widget file (_STREAMLIT_WIDGET_FILENAME) is always
+    excluded — it is a helper module that imports streamlit but is not an entry point.
     """
-    # Priority 1 — canonical names
+    # Priority 1 — canonical names (widget filename is never in this list)
     for name in ("app.py", "main.py", "streamlit_app.py", "run.py"):
         if (root / name).exists():
             return name
 
     # Priority 2 — file with __main__ guard + streamlit import
     for py_file in sorted(root.glob("*.py")):
+        if py_file.name == _STREAMLIT_WIDGET_FILENAME:
+            continue
         try:
             src = py_file.read_text(errors="replace")
         except OSError:
@@ -302,6 +478,8 @@ def _find_streamlit_entry(root: Path, stack_profile: dict) -> str | None:
 
     # Priority 3 — any root .py that imports AND calls st.*
     for py_file in sorted(root.glob("*.py")):
+        if py_file.name == _STREAMLIT_WIDGET_FILENAME:
+            continue
         try:
             src = py_file.read_text(errors="replace").lower()
         except OSError:
@@ -311,6 +489,8 @@ def _find_streamlit_entry(root: Path, stack_profile: dict) -> str | None:
 
     # Priority 4 — any root .py that merely imports streamlit
     for py_file in sorted(root.glob("*.py")):
+        if py_file.name == _STREAMLIT_WIDGET_FILENAME:
+            continue
         try:
             if "import streamlit" in py_file.read_text(errors="replace").lower():
                 return py_file.name

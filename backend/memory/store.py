@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -7,12 +8,38 @@ from backend.config import settings
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
+# One SQLite connection per OS thread.  SQLite connections must not be shared
+# across threads; using a thread-local removes repeated open/close overhead
+# from the many small checkpoint writes the orchestrator makes during a job.
+_tlocal = threading.local()
+
 
 def get_db_connection() -> sqlite3.Connection:
-    """Return a connection with row_factory = sqlite3.Row."""
-    conn = sqlite3.connect(settings.DB_PATH)
-    conn.row_factory = sqlite3.Row
+    """
+    Return the thread-local SQLite connection, creating it on first access.
+    The connection is cached for the lifetime of the thread.
+    """
+    conn: sqlite3.Connection | None = getattr(_tlocal, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(settings.DB_PATH, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        _tlocal.conn = conn
     return conn
+
+
+def close_thread_connection() -> None:
+    """
+    Close and discard the thread-local connection.
+    Call from test teardown and from the server shutdown hook to release
+    file handles cleanly.
+    """
+    conn: sqlite3.Connection | None = getattr(_tlocal, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _tlocal.conn = None
 
 
 def init_db() -> None:

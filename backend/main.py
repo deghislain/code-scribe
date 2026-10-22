@@ -71,6 +71,8 @@ async def lifespan(app: FastAPI):
     log.info("Code-Scribe shutting down")
     cancel_running_jobs()
     stop_scheduler()
+    from backend.memory.store import close_thread_connection
+    close_thread_connection()
 
 
 app = FastAPI(title="Code-Scribe", lifespan=lifespan)

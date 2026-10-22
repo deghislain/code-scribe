@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import signal
 import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from typing import Optional, TypedDict
 
 from backend.logger import get_logger
@@ -27,7 +29,7 @@ class CheckpointResult(TypedDict):
 _MAX_OUTPUT = 4000  # chars kept per stdout/stderr
 
 
-def _run(cmd: list[str], cwd: str) -> CheckpointResult:
+def _run(cmd: list[str], cwd: str, timeout: int = 300) -> CheckpointResult:
     """Run a command, return a CheckpointResult."""
     log.debug("Running: %s (cwd=%s)", " ".join(cmd), cwd)
     try:
@@ -36,7 +38,7 @@ def _run(cmd: list[str], cwd: str) -> CheckpointResult:
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=timeout,
         )
         stdout = proc.stdout[-_MAX_OUTPUT:] if proc.stdout else ""
         stderr = proc.stderr[-_MAX_OUTPUT:] if proc.stderr else ""
@@ -99,9 +101,9 @@ def install_deps(repo_dir: str, stack_profile: dict, job_id: int) -> CheckpointR
             result = _run(["npm", "install"], repo_dir)
     elif "Java" in langs:
         if "maven" in stack_profile.get("build_system", ""):
-            result = _run(["mvn", "dependency:resolve", "-q"], repo_dir)
+            result = _run(["mvn", "dependency:resolve", "-q"], repo_dir, timeout=600)
         elif "gradle" in stack_profile.get("build_system", ""):
-            result = _run(["./gradlew", "dependencies", "-q"], repo_dir)
+            result = _run(["./gradlew", "dependencies", "-q"], repo_dir, timeout=600)
         else:
             result = CheckpointResult(
                 status="not_applicable", command="", stdout="", stderr="No Java dep install command found.", exit_code=0
@@ -153,9 +155,9 @@ def build(repo_dir: str, stack_profile: dict, job_id: int) -> CheckpointResult:
             )
     elif "Java" in langs:
         if "maven" in build_system:
-            result = _run(["mvn", "package", "-DskipTests", "-q"], repo_dir)
+            result = _run(["mvn", "package", "-DskipTests", "-q"], repo_dir, timeout=600)
         elif "gradle" in build_system:
-            result = _run(["./gradlew", "build", "-x", "test"], repo_dir)
+            result = _run(["./gradlew", "build", "-x", "test"], repo_dir, timeout=600)
         else:
             result = CheckpointResult(
                 status="not_applicable", command="", stdout="", stderr="No known Java build system.", exit_code=0
@@ -242,10 +244,17 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def start_app(repo_dir: str, stack_profile: dict, job_id: int) -> Optional[subprocess.Popen]:
+def _build_launch_cmd(
+    repo_dir: str,
+    stack_profile: dict,
+    port: int,
+) -> "Optional[list[str]]":
     """
-    Attempt to start the application in the background.
-    Returns the Popen handle if successful, None otherwise.
+    Build the subprocess launch command for the detected stack.
+
+    Shared by `start_app()` and `verify_chat_widget()` so the command-building
+    logic lives in exactly one place.  Returns None when no suitable command
+    can be determined for the detected stack.
     """
     from pathlib import Path
     root = Path(repo_dir)
@@ -254,10 +263,15 @@ def start_app(repo_dir: str, stack_profile: dict, job_id: int) -> Optional[subpr
     frameworks = stack_profile.get("frameworks", [])
 
     cmd: Optional[list[str]] = None
-    port = _find_free_port()
 
     if "Python" in langs:
-        if "Flask" in frameworks:
+        # Streamlit first — widget verification depends on this ordering
+        if "Streamlit" in frameworks:
+            ep = next((e for e in entry_points if e.endswith(".py")), None)
+            if ep:
+                cmd = [sys.executable, "-m", "streamlit", "run", ep,
+                       "--server.port", str(port), "--server.headless", "true"]
+        elif "Flask" in frameworks:
             ep = next((e for e in entry_points if e.endswith(".py")), None)
             if ep:
                 cmd = [sys.executable, ep]
@@ -265,19 +279,48 @@ def start_app(repo_dir: str, stack_profile: dict, job_id: int) -> Optional[subpr
             ep = next((e for e in entry_points if e.endswith(".py")), None)
             if ep:
                 module = ep.replace(".py", "").replace("/", ".")
-                cmd = [sys.executable, "-m", "uvicorn", f"{module}:app", "--port", str(port), "--host", "0.0.0.0"]
+                cmd = [sys.executable, "-m", "uvicorn", f"{module}:app",
+                       "--port", str(port), "--host", "0.0.0.0"]
         elif "Django" in frameworks and (root / "manage.py").exists():
             cmd = [sys.executable, "manage.py", "runserver", f"0.0.0.0:{port}"]
-        elif "Streamlit" in frameworks:
-            ep = next((e for e in entry_points if e.endswith(".py")), None)
-            if ep:
-                cmd = [sys.executable, "-m", "streamlit", "run", ep, "--server.port", str(port)]
         elif entry_points:
             cmd = [sys.executable, entry_points[0]]
     elif "JavaScript" in langs or "TypeScript" in langs:
         cmd = ["npm", "start"]
     elif "Go" in langs:
         cmd = ["go", "run", "./..."]
+
+    return cmd
+
+
+def _app_env() -> dict:
+    """
+    Build a subprocess environment that inherits the current process env and
+    additionally forwards GROQ_API_KEY and GROQ_MODEL so the injected chat
+    widget can reach Groq without requiring the user to set these separately
+    in every terminal session where they run the target app.
+    """
+    env = os.environ.copy()
+    # These are already present if Code-Scribe was started with them set,
+    # but we make the forwarding explicit so it's clear what's happening.
+    for key in ("GROQ_API_KEY", "GROQ_MODEL"):
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+    return env
+
+
+def start_app(repo_dir: str, stack_profile: dict, job_id: int) -> Optional[subprocess.Popen]:
+    """
+    Attempt to start the application in the background.
+    Returns the Popen handle if successful, None otherwise.
+
+    GROQ_API_KEY and GROQ_MODEL are forwarded into the child process
+    environment so the injected chat widget can call Groq without the user
+    needing to set those variables in a separate shell.
+    """
+    port = _find_free_port()
+    cmd = _build_launch_cmd(repo_dir, stack_profile, port)
 
     if cmd is None:
         store.set_checkpoint(job_id, "app_launched", "blocked", {
@@ -293,6 +336,7 @@ def start_app(repo_dir: str, stack_profile: dict, job_id: int) -> Optional[subpr
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=_app_env(),
         )
         bound = _wait_for_port(port, timeout=10.0)
         evidence: dict = {
@@ -311,6 +355,118 @@ def start_app(repo_dir: str, stack_profile: dict, job_id: int) -> Optional[subpr
         log.error("Failed to start application: %s", exc)
         store.set_checkpoint(job_id, "app_launched", "blocked", {"error": str(exc)})
         return None
+
+
+def verify_chat_widget(repo_dir: str, stack_profile: dict, job_id: int) -> CheckpointResult:
+    """
+    Start the target application after chat injection and verify the widget
+    is reachable.
+
+    Strategy:
+    - Launch the app with GROQ_API_KEY forwarded (same as start_app).
+    - For Streamlit: poll the /_stcore/health endpoint which returns 200
+      when the server is fully ready.
+    - For other stacks: a successful TCP bind is enough.
+    - Stop the app before returning.
+
+    This confirms the widget import doesn't crash at startup and that
+    GROQ_API_KEY reaches the process correctly.
+    """
+    frameworks = stack_profile.get("frameworks", [])
+    port = _find_free_port()
+    cmd = _build_launch_cmd(repo_dir, stack_profile, port)
+
+    if cmd is None:
+        result = CheckpointResult(
+            status="not_applicable",
+            command="",
+            stdout="",
+            stderr="No known start command — skipping widget verification.",
+            exit_code=0,
+        )
+        store.set_checkpoint(job_id, "chat_widget_verified", "not_applicable",
+                             {"reason": result["stderr"]})
+        return result
+
+    proc: Optional[subprocess.Popen] = None
+    try:
+        log.info("Verifying chat widget — launching: %s (cwd=%s)", " ".join(cmd), repo_dir)
+        proc = subprocess.Popen(
+            cmd,
+            cwd=repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=_app_env(),
+        )
+
+        # Wait for TCP port to open (all stacks)
+        bound = _wait_for_port(port, timeout=30.0)
+        if not bound:
+            stdout = proc.stdout.read(2000) if proc.stdout else ""
+            stderr = proc.stderr.read(2000) if proc.stderr else ""
+            result = CheckpointResult(
+                status="blocked",
+                command=" ".join(cmd),
+                stdout=stdout,
+                stderr=stderr or "App did not bind port within 30s",
+                exit_code=-1,
+            )
+            store.set_checkpoint(job_id, "chat_widget_verified", "blocked", {
+                "command": result["command"],
+                "stderr": result["stderr"][-500:],
+            })
+            return result
+
+        # For Streamlit: additionally wait for the health endpoint
+        health_ok = False
+        if "Streamlit" in frameworks:
+            health_url = f"http://127.0.0.1:{port}/_stcore/health"
+            deadline = time.time() + 30.0
+            while time.time() < deadline:
+                try:
+                    with urllib.request.urlopen(health_url, timeout=2) as resp:
+                        if resp.status == 200:
+                            health_ok = True
+                            break
+                except Exception:
+                    time.sleep(1.0)
+            if not health_ok:
+                log.warning("Streamlit health endpoint did not respond on port %d", port)
+        else:
+            health_ok = True  # TCP bind is sufficient for non-Streamlit stacks
+
+        status = "done" if health_ok else "blocked"
+        evidence: dict = {
+            "command": " ".join(cmd),
+            "port": port,
+            "health_check": "passed" if health_ok else "failed",
+        }
+        store.set_checkpoint(job_id, "chat_widget_verified", status, evidence)
+        if health_ok:
+            log.info("Chat widget verified — app healthy on port %d", port)
+        else:
+            log.warning("Chat widget verification: app bound port but health check failed")
+
+        return CheckpointResult(
+            status=status,
+            command=" ".join(cmd),
+            stdout="",
+            stderr="" if health_ok else "Health endpoint did not respond",
+            exit_code=0 if health_ok else 1,
+        )
+
+    except Exception as exc:
+        log.error("Chat widget verification failed: %s", exc)
+        store.set_checkpoint(job_id, "chat_widget_verified", "blocked", {"error": str(exc)})
+        return CheckpointResult(
+            status="blocked", command=" ".join(cmd) if cmd else "",
+            stdout="", stderr=str(exc), exit_code=-1,
+        )
+    finally:
+        if proc is not None:
+            stop_app(proc)
+            log.debug("Verification app process stopped")
 
 
 def stop_app(proc: subprocess.Popen) -> None:

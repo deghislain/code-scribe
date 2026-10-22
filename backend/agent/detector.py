@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from backend.agent import llm
+from backend.agent.utils import read_safe, tree_listing
 
 
 class StackProfile(TypedDict):
@@ -20,32 +21,6 @@ class StackProfile(TypedDict):
     gui_type: str          # "web" | "desktop" | "none"
     entry_points: list[str]
     package_managers: list[str]
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _read_safe(path: Path, max_bytes: int = 4096) -> str:
-    try:
-        return path.read_text(errors="replace")[:max_bytes]
-    except OSError:
-        return ""
-
-
-def _tree_listing(root: Path, max_files: int = 200) -> str:
-    """Return a compact directory tree string."""
-    lines: list[str] = []
-    for i, p in enumerate(sorted(root.rglob("*"))):
-        if i >= max_files:
-            lines.append("... (truncated)")
-            break
-        # Skip hidden dirs / __pycache__ / node_modules
-        parts = p.relative_to(root).parts
-        if any(part.startswith(".") or part in {"__pycache__", "node_modules", ".git"} for part in parts):
-            continue
-        lines.append(str(p.relative_to(root)))
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +70,13 @@ def detect(repo_dir: str) -> StackProfile:
 
         # Python framework detection — scan all available dep/lock files
         reqs_text = (
-            _read_safe(root / "requirements.txt")
-            + _read_safe(root / "pyproject.toml")
-            + _read_safe(root / "Pipfile")
+            read_safe(root / "requirements.txt")
+            + read_safe(root / "pyproject.toml")
+            + read_safe(root / "Pipfile")
             # uv.lock and poetry.lock list package names one per line; read a
             # generous slice so we don't miss packages in large lock files.
-            + _read_safe(root / "uv.lock", max_bytes=65536)
-            + _read_safe(root / "poetry.lock", max_bytes=65536)
+            + read_safe(root / "uv.lock", max_chars=65536)
+            + read_safe(root / "poetry.lock", max_chars=65536)
         )
 
         _fw_keywords = [
@@ -161,10 +136,13 @@ def detect(repo_dir: str) -> StackProfile:
 
         # Also include any root-level .py that imports a detected web framework
         # (e.g. quizzer.py importing streamlit in the Quizer project).
+        # Exclude the Code-Scribe-injected widget file — it imports streamlit
+        # too, but it is a helper module, not an entry point.
+        from backend.agent.chat_injector import _STREAMLIT_WIDGET_FILENAME
         detected_fw_kws = {kw for _, kw in _fw_keywords if _ in frameworks}
         for py_file in sorted(root.glob("*.py")):
             rel = py_file.name
-            if rel in entry_points:
+            if rel in entry_points or rel == _STREAMLIT_WIDGET_FILENAME:
                 continue
             try:
                 src = py_file.read_text(errors="replace").lower()
@@ -181,7 +159,7 @@ def detect(repo_dir: str) -> StackProfile:
     if pkg_json_path.exists():
         languages.add("JavaScript")
         package_managers.append("npm")
-        pkg_json = _read_safe(pkg_json_path)
+        pkg_json = read_safe(pkg_json_path)
         try:
             pkg = json.loads(pkg_json)
         except json.JSONDecodeError:
@@ -240,7 +218,7 @@ def detect(repo_dir: str) -> StackProfile:
         frameworks.add("Maven")
         build_system = "maven"
         package_managers.append("mvn")
-        pom_text = _read_safe(root / "pom.xml")
+        pom_text = read_safe(root / "pom.xml")
         if "javafx" in pom_text.lower():
             frameworks.add("JavaFX")
             has_gui = True
@@ -281,7 +259,7 @@ def detect(repo_dir: str) -> StackProfile:
 
     # --- Fallback: ask LLM if ambiguous -------------------------------------
     if not languages:
-        tree = _tree_listing(root)
+        tree = tree_listing(root)
         prompt = (
             f"Here is the directory listing of a software project:\n\n{tree}\n\n"
             "Identify the primary programming language(s), frameworks, build system, "

@@ -233,7 +233,7 @@ class TestAddChatApiEndpoint:
         assert result is None
 
     def test_streamlit_returns_none(self, tmp_path):
-        """Streamlit widget calls Code-Scribe directly — no separate endpoint file."""
+        """Streamlit widget is self-contained — no proxy endpoint file needed."""
         result = chat_injector.add_chat_api_endpoint(str(tmp_path), {"frameworks": ["Streamlit"]})
         assert result is None
 
@@ -282,25 +282,24 @@ class TestGenerateStreamlitWidget:
     def test_returns_python_source(self, tmp_path, monkeypatch):
         monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=42
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
         assert "render_chat_widget" in code
         assert "Quizer" in code
-        assert "42" in code  # job_id substituted
         assert "st.chat_input" in code
         assert "cs_chat_history" in code
 
     def test_handles_bad_llm_json(self, tmp_path, monkeypatch):
         monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: "not json")
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
         assert "render_chat_widget" in code
 
     def test_widget_contains_guard_comment(self, tmp_path, monkeypatch):
         monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
         assert chat_injector._STREAMLIT_WIDGET_GUARD in code
 
@@ -308,10 +307,9 @@ class TestGenerateStreamlitWidget:
         """Generated widget must accumulate conversation history across turns."""
         monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
         assert "cs_chat_history" in code
-        assert "history_text" in code
         # cs_pending_input is the two-phase rerun mechanism for multi-turn
         assert "cs_pending_input" in code
 
@@ -323,33 +321,33 @@ class TestGenerateStreamlitWidget:
             lambda *a, **kw: json.dumps({"app_name": "Quizer", "app_description": app_desc}),
         )
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
         assert app_desc in code
 
-    def test_url_uses_configured_port(self, tmp_path, monkeypatch):
-        """The default fallback URL must contain the code_scribe_port argument."""
+    def test_groq_key_read_from_env(self, tmp_path, monkeypatch):
+        """Widget must read GROQ_API_KEY from the environment at runtime."""
         monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1,
-            code_scribe_port=8001,
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
-        assert "8001" in code
-
-    def test_url_falls_back_to_env_var(self, tmp_path, monkeypatch):
-        """Widget must check CODE_SCRIBE_URL env var at runtime before using the default."""
-        monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
-        code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1,
-        )
-        assert "CODE_SCRIBE_URL" in code
+        assert "GROQ_API_KEY" in code
         assert "os.environ" in code
+
+    def test_no_code_scribe_url_dependency(self, tmp_path, monkeypatch):
+        """Widget must NOT reference the Code-Scribe backend URL — it is self-contained."""
+        monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
+        code = chat_injector._generate_streamlit_widget(
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
+        )
+        assert "CODE_SCRIBE_URL" not in code
+        assert "/api/chat" not in code
 
     def test_no_inline_message_rendering_after_input(self, tmp_path, monkeypatch):
         """After st.chat_input there must be NO st.chat_message call — display only in history loop."""
         monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1,
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
         # The only rendering of messages should be in the history loop,
         # which comes BEFORE st.chat_input in the source.
@@ -361,7 +359,7 @@ class TestGenerateStreamlitWidget:
         """Widget must call st.rerun() after receiving user input to avoid mixed display."""
         monkeypatch.setattr("backend.agent.chat_injector.llm.ask", lambda *a, **kw: self._meta())
         code = chat_injector._generate_streamlit_widget(
-            str(tmp_path), {"frameworks": ["Streamlit"]}, {}, job_id=1,
+            str(tmp_path), {"frameworks": ["Streamlit"]}, {}
         )
         assert "st.rerun()" in code
 
@@ -441,3 +439,70 @@ class TestInject:
         assert cp["status"] == "done"
         assert chat_injector._STREAMLIT_WIDGET_FILENAME in cp["evidence"]["modified_files"]
         assert (tmp_path / chat_injector._STREAMLIT_WIDGET_FILENAME).exists()
+
+
+class TestIsGitignored:
+    def test_returns_false_when_no_gitignore(self, tmp_path):
+        assert chat_injector._is_gitignored(tmp_path, ".env") is False
+
+    def test_returns_true_when_exact_match(self, tmp_path):
+        (tmp_path / ".gitignore").write_text(".env\n")
+        assert chat_injector._is_gitignored(tmp_path, ".env") is True
+
+    def test_returns_true_when_wildcard_match(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("*.env\n")
+        assert chat_injector._is_gitignored(tmp_path, ".env") is True
+
+    def test_returns_false_when_not_listed(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("node_modules/\n__pycache__/\n")
+        assert chat_injector._is_gitignored(tmp_path, ".env") is False
+
+
+class TestInjectStreamlitCredentialSafety:
+    """Credentials should go to .env.scribe when .env is not git-ignored."""
+
+    def _make_streamlit_repo(self, tmp_path):
+        (tmp_path / "app.py").write_text("import streamlit as st\nst.title('x')\n")
+        return tmp_path
+
+    def test_uses_env_scribe_when_env_not_gitignored(self, tmp_path, monkeypatch):
+        """When .env is not in .gitignore, credentials go to .env.scribe."""
+        repo = self._make_streamlit_repo(tmp_path)
+        monkeypatch.setenv("GROQ_API_KEY", "test-key-123")
+        stack = {"languages": ["Python"], "frameworks": ["Streamlit"],
+                 "entry_points": ["app.py"], "package_managers": []}
+
+        with patch("backend.agent.chat_injector.llm.ask", return_value='{"app_name":"X","app_description":"desc"}'):
+            modified = chat_injector._inject_streamlit(str(repo), stack, {"routes": []}, 1)
+
+        assert ".env.scribe" in modified
+        assert (repo / ".env.scribe").exists()
+        assert (repo / ".env.scribe").read_text().count("GROQ_API_KEY") == 1
+
+    def test_uses_env_when_gitignored(self, tmp_path, monkeypatch):
+        """When .env is in .gitignore, credentials go to .env."""
+        repo = self._make_streamlit_repo(tmp_path)
+        (repo / ".gitignore").write_text(".env\n")
+        monkeypatch.setenv("GROQ_API_KEY", "test-key-456")
+        stack = {"languages": ["Python"], "frameworks": ["Streamlit"],
+                 "entry_points": ["app.py"], "package_managers": []}
+
+        with patch("backend.agent.chat_injector.llm.ask", return_value='{"app_name":"X","app_description":"desc"}'):
+            modified = chat_injector._inject_streamlit(str(repo), stack, {"routes": []}, 1)
+
+        assert ".env" in modified
+        assert (repo / ".env").exists()
+        assert ".env.scribe" not in modified
+
+    def test_env_scribe_added_to_gitignore(self, tmp_path, monkeypatch):
+        """When writing .env.scribe, it should be added to .gitignore."""
+        repo = self._make_streamlit_repo(tmp_path)
+        monkeypatch.setenv("GROQ_API_KEY", "test-key-789")
+        stack = {"languages": ["Python"], "frameworks": ["Streamlit"],
+                 "entry_points": ["app.py"], "package_managers": []}
+
+        with patch("backend.agent.chat_injector.llm.ask", return_value='{"app_name":"X","app_description":"desc"}'):
+            chat_injector._inject_streamlit(str(repo), stack, {"routes": []}, 1)
+
+        gitignore_content = (repo / ".gitignore").read_text()
+        assert ".env.scribe" in gitignore_content
